@@ -1,0 +1,59 @@
+name: Build Jarvis CZ APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Android Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Get Flutter dependencies
+        run: flutter pub get
+
+      - name: Build APK (Release)
+        run: flutter build apk --release
+
+      - name: Rename APK
+        run: |
+          cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/jarvis-release-cz.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-release-cz
+          path: build/app/outputs/flutter-apk/jarvis-release-cz.apk
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0-cz
+          name: "JARVIS CZ v1.0.0"
+          body: "Oficiální český překlad rozhraní Jarvis (PrivateAgent)"
+          files: build/app/outputs/flutter-apk/jarvis-release-cz.apk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
