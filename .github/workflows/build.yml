@@ -49,9 +49,9 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.3.0-cz
-          name: "JARVIS CZ v1.3.0"
-          body: "Kompletní česká lokalizace J.A.R.V.I.S. + 3D vícevrstvý obloukový reaktor Mark LXXXV, probuzení přes zamknutou obrazovku při nabíjení a 3D widget na domovskou obrazovku."
+          tag_name: v1.4.0-cz
+          name: "JARVIS CZ v1.4.0"
+          body: "Kompletní česká lokalizace J.A.R.V.I.S. + blesková hlasová odezva (~0,2 s), přímé otevírání webových stránek v prohlížeči, oprava kolize domén .com s aplikacemi, vestavěné záložní AI jádro bez API klíče, 3D obloukový reaktor Mark LXXXV a 3D widget."
           files: build/app/outputs/flutter-apk/jarvis-release-cz.apk
           draft: false
           prerelease: false

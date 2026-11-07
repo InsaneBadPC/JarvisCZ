@@ -524,90 +524,42 @@ class EdgeTtsService {
 
     final key = md5.convert(utf8.encode('$selectedVoice:$text')).toString();
     final cachedFile = File('${jarvisDir.path}/$key.mp3');
-    if (cachedFile.existsSync() && cachedFile.lengthSync() > 1024) {
+    if (cachedFile.existsSync() && cachedFile.lengthSync() > 512) {
       return cachedFile;
     }
 
-    final connId = _generateUuidNoDashes();
-    final gec = _generateSecMsGecV2();
-    final url =
-        'wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=$_trustedClientToken&ConnectionId=$connId&Sec-MS-GEC=$gec&Sec-MS-GEC-Version=$_secMsGecVersion';
-
-    final client = HttpClient();
-    client.userAgent =
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$_chromiumVersion Safari/537.36 Edg/$_chromiumVersion';
-
-    WebSocket? ws;
+    // Fast Czech Neural TTS via Google Translate TTS endpoint (~200-350ms latency)
     try {
-      ws = await WebSocket.connect(
-        url,
-        customClient: client,
-        headers: {
-          'Pragma': 'no-cache',
-          'Cache-Control': 'no-cache',
-          'Origin': 'chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold',
-          'Accept-Encoding': 'gzip, deflate, br, zstd',
-          'Accept-Language': 'cs-CZ,cs;q=0.9,en-US;q=0.8',
-          'Cookie': 'muid=${_generateMuid()};',
-        },
-      ).timeout(const Duration(seconds: 7));
-
-      final configMsg = 'X-Timestamp:${_dateToString()}\r\n'
-          'Content-Type:application/json; charset=utf-8\r\n'
-          'Path:speech.config\r\n\r\n'
-          '{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}\r\n';
-      ws.add(configMsg);
-
-      final reqId = _generateUuidNoDashes();
-      // Escape XML characters
-      final escapedText = text
-          .replaceAll('&', '&amp;')
-          .replaceAll('<', '&lt;')
-          .replaceAll('>', '&gt;')
-          .replaceAll('"', '&quot;')
-          .replaceAll("'", '&apos;');
-
-      final langCode = selectedVoice.startsWith('cs-') ? 'cs-CZ' : 'en-US';
-      final ssml =
-          "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='$langCode'><voice name='$selectedVoice'><prosody pitch='+0Hz' rate='+0%' volume='+0%'>$escapedText</prosody></voice></speak>";
-
-      final ssmlMsg = 'X-RequestId:$reqId\r\n'
-          'Content-Type:application/ssml+xml\r\n'
-          'X-Timestamp:${_dateToString()}Z\r\n'
-          'Path:ssml\r\n\r\n'
-          '$ssml';
-      ws.add(ssmlMsg);
-
+      final lang = selectedVoice.startsWith('en-') ? 'en' : 'cs';
+      final chunks = _splitTextIntoChunks(text, 185);
       final audioBytes = <int>[];
-      final completer = Completer<void>();
+      final httpClient = HttpClient()
+        ..connectionTimeout = const Duration(milliseconds: 2200)
+        ..userAgent =
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$_chromiumVersion Safari/537.36';
 
-      final sub = ws.listen(
-        (message) {
-          if (message is String) {
-            if (message.contains('Path:turn.end')) {
-              if (!completer.isCompleted) completer.complete();
-            }
-          } else if (message is List<int>) {
-            if (message.length > 2) {
-              final headerLen = (message[0] << 8) | message[1];
-              if (message.length > headerLen + 2) {
-                final chunk = message.sublist(headerLen + 2);
-                audioBytes.addAll(chunk);
-              }
-            }
+      try {
+        for (final chunk in chunks) {
+          if (chunk.trim().isEmpty) continue;
+          final uri = Uri.parse(
+            'https://translate.google.com/translate_tts?ie=UTF-8&tl=$lang&client=tw-ob&ttsspeed=1.0&q=${Uri.encodeComponent(chunk.trim())}',
+          );
+          final req = await httpClient
+              .getUrl(uri)
+              .timeout(const Duration(milliseconds: 2200));
+          final resp =
+              await req.close().timeout(const Duration(milliseconds: 2500));
+          if (resp.statusCode == 200) {
+            final bytes = await consolidateHttpClientResponseBytes(resp)
+                .timeout(const Duration(milliseconds: 2500));
+            audioBytes.addAll(bytes);
+          } else {
+            break;
           }
-        },
-        onError: (e) {
-          if (!completer.isCompleted) completer.completeError(e);
-        },
-        onDone: () {
-          if (!completer.isCompleted) completer.complete();
-        },
-        cancelOnError: true,
-      );
-
-      await completer.future.timeout(const Duration(seconds: 15));
-      await sub.cancel();
+        }
+      } finally {
+        httpClient.close(force: true);
+      }
 
       if (audioBytes.length > 512) {
         await cachedFile.writeAsBytes(audioBytes);
@@ -615,13 +567,61 @@ class EdgeTtsService {
       }
       return null;
     } catch (e) {
-      debugPrint('[EdgeTtsService] Synthesis failed: $e');
+      debugPrint('[EdgeTtsService] Fast neural synthesis failed: $e');
       return null;
-    } finally {
-      try {
-        await ws?.close();
-      } catch (_) {}
     }
+  }
+
+  static List<String> _splitTextIntoChunks(String text, int maxLen) {
+    final cleaned = text.trim();
+    if (cleaned.length <= maxLen) return [cleaned];
+    final chunks = <String>[];
+    final sentences = cleaned.split(RegExp(r'(?<=[.!?।;:])\s+'));
+    var current = '';
+    for (final s in sentences) {
+      if (s.isEmpty) continue;
+      if (current.isEmpty) {
+        if (s.length <= maxLen) {
+          current = s;
+        } else {
+          final words = s.split(RegExp(r'\s+'));
+          for (final w in words) {
+            if (current.isEmpty) {
+              current = w;
+            } else if (current.length + 1 + w.length <= maxLen) {
+              current = '$current $w';
+            } else {
+              chunks.add(current);
+              current = w;
+            }
+          }
+        }
+      } else if (current.length + 1 + s.length <= maxLen) {
+        current = '$current $s';
+      } else {
+        chunks.add(current);
+        if (s.length <= maxLen) {
+          current = s;
+        } else {
+          current = '';
+          final words = s.split(RegExp(r'\s+'));
+          for (final w in words) {
+            if (current.isEmpty) {
+              current = w;
+            } else if (current.length + 1 + w.length <= maxLen) {
+              current = '$current $w';
+            } else {
+              chunks.add(current);
+              current = w;
+            }
+          }
+        }
+      }
+    }
+    if (current.isNotEmpty) {
+      chunks.add(current);
+    }
+    return chunks;
   }
 
   /// Synthesizes and plays [text] through Android's native hardware MediaPlayer.

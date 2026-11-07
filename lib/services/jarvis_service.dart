@@ -412,11 +412,11 @@ class JarvisService extends ChangeNotifier {
   /// Called when user navigates into JARVIS mode.
   void onEnterJarvisMode() {
     _isInJarvisMode = true;
-    _standDown();
-    startListening();
+    _wakeUp();
+    startListening(manual: true);
     // Arm mid-air proximity sensor for zero-touch gestures while in JARVIS mode
     unawaited(AirGestureService.instance.start());
-    _statusMessage = 'POHOTOVOST // ŘEKNĚTE „HEJ JARVIS“';
+    _statusMessage = 'NASLOUCHÁM // AUDIO RECEPTORY AKTIVNÍ';
     notifyListeners();
   }
 
@@ -628,13 +628,13 @@ class JarvisService extends ChangeNotifier {
         }
 
         // Voice Activity / Silence Debounce Timer:
-        // When awake or wake-word is present, whenever user stops speaking (silence for ~950ms),
+        // When awake or wake-word is present, whenever user stops speaking (silence for ~1450ms),
         // automatically trigger command processing so the user never gets stuck waiting on Android's silence detector!
         final hasWake = _extractWakeCommand(words) != null ||
             candidates.any((c) => _extractWakeCommand(c) != null);
-        if (_isAwake || hasWake) {
+        if (_isAwake || _isInJarvisMode || hasWake) {
           _speechSilenceTimer?.cancel();
-          _speechSilenceTimer = Timer(const Duration(milliseconds: 950), () {
+          _speechSilenceTimer = Timer(const Duration(milliseconds: 1450), () {
             final trimmed = _lastUserSpeech.trim();
             if (trimmed.isNotEmpty) {
               debugPrint('[JarvisService] Silence debounce timer fired for: "$trimmed"');
@@ -767,9 +767,10 @@ class JarvisService extends ChangeNotifier {
       }
     }
 
-    // 3. User is already awake (from previous "Hey Jarvis" greeting or manual screen tap):
+    // 3. User is already awake or inside JARVIS HUD screen:
     // Execute direct follow-up commands!
-    if (_isAwake) {
+    if (_isAwake || _isInJarvisMode) {
+      _wakeUp();
       await processCommand(trimmed);
       return;
     }
@@ -820,6 +821,8 @@ class JarvisService extends ChangeNotifier {
   /// Processes a voice command through JARVIS intelligence.
   Future<void> processCommand(String command) async {
     _wakeUp();
+    _speechSilenceTimer?.cancel();
+    await _voice.stopListening();
 
     final trimmed = command.trim();
     if (trimmed.isEmpty) return;
@@ -829,6 +832,21 @@ class JarvisService extends ChangeNotifier {
     _statusMessage = 'VÝPOČET // ANALÝZA PŘÍKAZU';
     notifyListeners();
 
+    try {
+      await _processCommandInternal(trimmed);
+    } catch (e) {
+      debugPrint('[JarvisService] processCommand error: $e');
+      const errSpeech = 'Omlouvám se, pane, při zpracování požadavku došlo k chybě spojení. Zkuste to prosím znovu.';
+      _lastJarvisSpeech = errSpeech;
+      _phase = JarvisPhase.speaking;
+      _statusMessage = 'SYSTÉMOVÁ OBNOVA // PŘIPRAVEN';
+      notifyListeners();
+      await _voice.speak(errSpeech);
+      await _startFollowUpListening();
+    }
+  }
+
+  Future<void> _processCommandInternal(String trimmed) async {
     final lower = trimmed.toLowerCase();
 
     // 1. Fast cancel / abort check
@@ -1813,6 +1831,83 @@ Mastering the boundless road.
       }
       await _startFollowUpListening();
       return;
+    }
+
+    // 3f-2. Fast Direct Website / URL Opening ("otevři stránku github.com", "otevři github.com", "jdi na seznam.cz")
+    {
+      final normWeb = lower
+          .replaceAll(RegExp(r'\s+tečka\s+|\s+tecka\s+|\s+dot\s+'), '.')
+          .replaceAll(RegExp(r'\s+lomítko\s+|\s+lomitko\s+|\s+slash\s+'), '/');
+      final explicitWebMatch = RegExp(
+        r'^(?:otevři|otevri|spusť|spust|načti|nacti|zobraz|jdi\s+na|přejdi\s+na|prejdi\s+na|open|go\s+to)\s+(?:webovou\s+stránku|webovou\s+stranku|stránku|stranku|web|adresu|url|website|site|page)\s+(.+)$',
+        caseSensitive: false,
+      ).firstMatch(normWeb);
+      final directDomainMatch = RegExp(
+        r'^(?:otevři|otevri|spusť|spust|načti|nacti|zobraz|jdi\s+na|přejdi\s+na|prejdi\s+na|open|go\s+to)\s+((?:https?://|www\.)?\S+\.(?:com|cz|sk|eu|org|net|io|ai|dev|gg|tv|me|info|co|uk|de|pl)(?:/\S*)?)$',
+        caseSensitive: false,
+      ).firstMatch(normWeb);
+
+      String? rawTarget = explicitWebMatch?.group(1)?.trim() ??
+          directDomainMatch?.group(1)?.trim();
+
+      if (rawTarget != null && rawTarget.isNotEmpty) {
+        rawTarget = rawTarget
+            .replaceAll(
+                RegExp(
+                    r'\s+(?:v\s+prohlížeči|v\s+chromu|v\s+chrome|in\s+chrome|in\s+browser)$'),
+                '')
+            .replaceAll(RegExp(r'\s*\.\s*'), '.')
+            .trim();
+
+        const knownSites = <String, String>{
+          'github': 'github.com',
+          'seznam': 'seznam.cz',
+          'google': 'google.com',
+          'wikipedie': 'cs.wikipedia.org',
+          'wikipedia': 'cs.wikipedia.org',
+          'idnes': 'idnes.cz',
+          'novinky': 'novinky.cz',
+          'alza': 'alza.cz',
+          'heureka': 'heureka.cz',
+          'mapy': 'mapy.cz',
+          'chatgpt': 'chatgpt.com',
+          'reddit': 'reddit.com',
+          'youtube': 'youtube.com',
+          'facebook': 'facebook.com',
+          'instagram': 'instagram.com',
+          'twitter': 'x.com',
+          'x': 'x.com',
+        };
+
+        String domain = knownSites[rawTarget] ?? rawTarget;
+        if (!domain.contains('.') && !domain.contains(' ')) {
+          domain = '$domain.com';
+        }
+        domain = domain.replaceAll(' ', '');
+        final fullUrl =
+            domain.startsWith('http://') || domain.startsWith('https://')
+                ? domain
+                : 'https://$domain';
+        final spokenDomain =
+            domain.replaceFirst(RegExp(r'^https?://'), '').replaceFirst(RegExp(r'^www\.'), '');
+
+        final ack = 'Otevírám stránku $spokenDomain v prohlížeči, pane.';
+        _lastJarvisSpeech = ack;
+        _phase = JarvisPhase.speaking;
+        _statusMessage = 'OTEVÍRÁM WEB: ${spokenDomain.toUpperCase()}';
+        notifyListeners();
+
+        try {
+          final uri = Uri.parse(fullUrl);
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        } catch (e) {
+          debugPrint('[JarvisService] Website launch error: $e');
+        }
+
+        await _voice.speak(ack);
+        await _startFollowUpListening();
+        return;
+      }
     }
 
     // 3g. Fast Direct App Opening ("open youtube", "open whatsapp", "open camera", "open settings")
@@ -3079,14 +3174,17 @@ Mastering the boundless road.
       case JarvisIntentType.chat:
         String chatAnswer = intent.spoken;
         if (chatAnswer.trim().isEmpty ||
-            chatAnswer.length < 25 ||
             chatAnswer.toLowerCase().contains('at your service') ||
             chatAnswer.toLowerCase().contains('k vašim službám') ||
             chatAnswer.toLowerCase().contains('what would you like me to do')) {
           _phase = JarvisPhase.thinking;
           _statusMessage = 'ZPRACOVÁVÁM // NEURONOVÉ JÁDRO';
           notifyListeners();
-          chatAnswer = await _ai.chat(message: trimmed, history: _dialogHistory);
+          try {
+            chatAnswer = await _ai.chat(message: trimmed, history: _dialogHistory);
+          } catch (_) {
+            chatAnswer = 'Jsem plně připraven, pane. Jaký další příkaz mám provést?';
+          }
         }
         _lastJarvisSpeech = chatAnswer;
         _phase = JarvisPhase.speaking;

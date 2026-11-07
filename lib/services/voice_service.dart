@@ -285,7 +285,9 @@ class VoiceService {
       }
 
       // 2. Fall back to local FlutterTts (offline safe)
-      await initTts();
+      if (!_ttsReady) {
+        await initTts();
+      }
       if (!_ttsReady) {
         return;
       }
@@ -293,7 +295,10 @@ class VoiceService {
         _speakCompleter = Completer<void>();
         await _tts.speak(clean);
         // Wait for audio synthesis and speaker playback to finish completely
-        await _speakCompleter?.future;
+        await _speakCompleter?.future.timeout(
+          const Duration(seconds: 15),
+          onTimeout: () {},
+        );
       } catch (_) {
       } finally {
         _speakCompleter = null;

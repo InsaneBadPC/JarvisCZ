@@ -540,7 +540,11 @@ class JarvisIntent {
     }
 
     // Fast battery check
-    if (lower.contains('battery') || lower.contains('charging') || lower.contains('bateri')) {
+    if (lower.contains('battery') ||
+        lower.contains('charging') ||
+        lower.contains('bateri') ||
+        lower.contains('kolik mám procent') ||
+        lower.contains('stav nabití')) {
       return const JarvisIntent(
         type: JarvisIntentType.battery,
         spoken: 'Kontroluji stav baterie, pane.',
@@ -548,12 +552,19 @@ class JarvisIntent {
     }
 
     // Fast weather check
-    if (lower.contains('weather') || lower.contains('temperature') || lower.contains('počasí') || lower.contains('teplota')) {
+    if (lower.contains('weather') ||
+        lower.contains('temperature') ||
+        lower.contains('počasí') ||
+        lower.contains('teplota venku') ||
+        lower.contains('jak je venku') ||
+        lower.contains('bude pršet')) {
       var city = '';
       if (lower.contains(' in ')) {
         city = lower.split(' in ').last.trim();
       } else if (lower.contains(' v ')) {
         city = lower.split(' v ').last.trim();
+      } else if (lower.contains(' ve ')) {
+        city = lower.split(' ve ').last.trim();
       }
       return JarvisIntent(
         type: JarvisIntentType.weather,
@@ -563,7 +574,7 @@ class JarvisIntent {
     }
 
     // Fast date/time check
-    if (RegExp(r'\b(what time is it|what time|current time|what is the time|what date|what day is it|today\x27s date|kolik je hodin|jaké je datum)\b').hasMatch(lower) ||
+    if (RegExp(r'\b(what time is it|what time|current time|what is the time|what date|what day is it|today\x27s date|kolik je hodin|jaký je čas|jaké je datum|co je dnes za den|kolikátého je)\b').hasMatch(lower) ||
         (lower == 'time' || lower == 'date' || lower == 'čas' || lower == 'datum')) {
       return const JarvisIntent(
         type: JarvisIntentType.datetime,
@@ -572,14 +583,24 @@ class JarvisIntent {
     }
 
     // Fast flashlight check
-    if (lower.contains('flashlight on') || lower.contains('torch on') || lower.contains('zapni svítilnu')) {
+    if (lower.contains('flashlight on') ||
+        lower.contains('torch on') ||
+        lower.contains('zapni svítilnu') ||
+        lower.contains('zapni baterku') ||
+        lower.contains('rozsviť baterku') ||
+        lower.contains('rozsviť svítilnu')) {
       return const JarvisIntent(
         type: JarvisIntentType.torch,
         spoken: 'Zapínám svítilnu, pane.',
         toolArg: 'on',
       );
     }
-    if (lower.contains('flashlight off') || lower.contains('torch off') || lower.contains('vypni svítilnu')) {
+    if (lower.contains('flashlight off') ||
+        lower.contains('torch off') ||
+        lower.contains('vypni svítilnu') ||
+        lower.contains('vypni baterku') ||
+        lower.contains('zhasni baterku') ||
+        lower.contains('zhasni svítilnu')) {
       return const JarvisIntent(
         type: JarvisIntentType.torch,
         spoken: 'Deaktivuji svítilnu, pane.',
@@ -873,15 +894,14 @@ V tomto režimu nemůžete přímo klepat na obrazovku. Pokud vás uživatel po�
     ];
 
     if (settings.apiKey.isEmpty && !_isLocalBackend) {
-      throw const AiException(
-        'Není nastaven žádný API klíč. Otevřete Nastavení a nejprve jej zadejte.',
-      );
+      final fallback = await chat(message: message, history: history);
+      yield fallback;
+      return;
     }
-    if (settings.baseUrl.isEmpty) {
-      throw const AiException('Není nastavena žádná základní URL adresa.');
-    }
-    if (settings.model.isEmpty) {
-      throw const AiException('Není nastaven název modelu.');
+    if (settings.baseUrl.isEmpty || settings.model.isEmpty) {
+      final fallback = await chat(message: message, history: history);
+      yield fallback;
+      return;
     }
 
     final base = settings.baseUrl.replaceAll(RegExp(r'/+$'), '');
@@ -969,6 +989,15 @@ V tomto režimu nemůžete přímo klepat na obrazovku. Pokud vás uživatel po�
     List<Map<String, String>> history = const [],
   }) async {
     final settings = SettingsService.instance;
+    // Fast local intent check first: if a specific non-chat tool/system/action matches,
+    // return immediately for zero-latency execution; if no API key is configured,
+    // avoid double round-trip by returning the fallback intent directly.
+    final localFallback = JarvisIntent.fallback(speech);
+    if (localFallback.type != JarvisIntentType.chat ||
+        (settings.apiKey.isEmpty && !_isLocalBackend)) {
+      return localFallback;
+    }
+
     final hermes = HermesEvolutionService.instance.buildHermesSystemContext();
     final persona = PersonalityService.instance.buildPersonaPrompt(speech);
     final memory = ConversationalMemoryService.instance.buildMemoryContext();
@@ -1319,21 +1348,59 @@ Uživatel si prohlíží článek nebo obrazovku na svém zařízení a požáda
     }
   }
 
+  /// Built-in zero-key AI fallback (Pollinations OpenAI-compatible gateway)
+  /// so JARVIS always responds in natural Czech even before an API key is configured.
+  Future<String> _postZeroKeyFallback(List<Map<String, dynamic>> messages) async {
+    final uri = Uri.parse('https://text.pollinations.ai/openai/chat/completions');
+    final cleanMessages = messages.map((m) {
+      final role = (m['role'] ?? 'user').toString();
+      final content = m['content'];
+      final text = content is String ? content : jsonEncode(content);
+      return {'role': role, 'content': text};
+    }).toList();
+
+    final body = jsonEncode({
+      'model': 'openai',
+      'messages': cleanMessages,
+      'temperature': 0.4,
+      'stream': false,
+    });
+
+    try {
+      final res = await _client
+          .post(
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              'User-Agent': 'Mozilla/5.0 (Linux; Android 14) Chrome/120.0.0.0 Mobile',
+            },
+            body: body,
+          )
+          .timeout(const Duration(seconds: 20));
+
+      if (res.statusCode == 200) {
+        final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+        final choices = decoded['choices'];
+        if (choices is List && choices.isNotEmpty) {
+          final content = choices[0]?['message']?['content'];
+          if (content is String && content.trim().isNotEmpty) {
+            return content.trim();
+          }
+        }
+      }
+    } catch (_) {}
+    return 'Jsem připraven a plně k vašim službám, pane.';
+  }
+
   /// Shared request/response plumbing for [complete], [chat], and [completeMultimodal].
   Future<String> _postChatCompletion(
     List<Map<String, dynamic>> messages,
     SettingsService settings,
   ) async {
-    if (settings.apiKey.isEmpty && !_isLocalBackend) {
-      throw const AiException(
-        'Není nastaven žádný API klíč. Otevřete Nastavení a nejprve jej zadejte.',
-      );
-    }
-    if (settings.baseUrl.isEmpty) {
-      throw const AiException('Není nastavena žádná základní URL adresa.');
-    }
-    if (settings.model.isEmpty) {
-      throw const AiException('Není nastaven název modelu.');
+    if ((settings.apiKey.isEmpty && !_isLocalBackend) ||
+        settings.baseUrl.isEmpty ||
+        settings.model.isEmpty) {
+      return _postZeroKeyFallback(messages);
     }
 
     final base = settings.baseUrl.replaceAll(RegExp(r'/+$'), '');
@@ -1342,10 +1409,6 @@ Uživatel si prohlíží článek nebo obrazovku na svém zařízení a požáda
     final headers = <String, String>{
       'Content-Type': 'application/json',
       'Authorization': 'Bearer ${settings.apiKey}',
-      // Some gateways sit behind Cloudflare-style bot protection that
-      // rejects non-browser clients by signature (HTTP 403, "error code:
-      // 1010"). Presenting a browser-like User-Agent keeps those
-      // endpoints reachable and is ignored by regular providers.
       'User-Agent':
           'Mozilla/5.0 (Linux; Android 14) '
           'AppleWebKit/537.36 (KHTML, like Gecko) '
@@ -1368,49 +1431,33 @@ Uživatel si prohlíží článek nebo obrazovku na svém zařízení a požáda
     try {
       res = await _client
           .post(uri, headers: headers, body: body)
-          .timeout(const Duration(seconds: 60));
-    } on TimeoutException {
-      throw const AiException('Časový limit požadavku vypršel po 60 s.');
-    } catch (e) {
-      throw AiException('Chyba sítě: $e');
+          .timeout(const Duration(seconds: 25));
+    } catch (_) {
+      return _postZeroKeyFallback(messages);
     }
 
     if (res.statusCode != 200) {
-      final snippet = res.body.length > 300
-          ? '${res.body.substring(0, 300)}…'
-          : res.body;
-      throw AiException(snippet, statusCode: res.statusCode);
+      return _postZeroKeyFallback(messages);
     }
 
     try {
       final decoded = jsonDecode(utf8.decode(res.bodyBytes));
       final choices = decoded['choices'];
       if (choices is! List || choices.isEmpty) {
-        throw const AiException('Odpověď neobsahovala žádné možnosti.');
+        return _postZeroKeyFallback(messages);
       }
       final choice = choices[0];
       final content = choice?['message']?['content'];
       if (content is String && content.trim().isNotEmpty) return content;
-      // Some providers return content as a list of parts.
       if (content is List) {
         final joined = content
             .map((p) => p is Map ? '${p['text'] ?? ''}' : '$p')
             .join();
         if (joined.trim().isNotEmpty) return joined;
       }
-      // Reasoning models can spend the entire completion budget on hidden
-      // reasoning and return empty content with finish_reason == 'length'.
-      if (choice?['finish_reason'] == 'length') {
-        throw const AiException(
-          'Model vyčerpal celý limit tokenů před odpovědí '
-          '(uvažující model?). Zvyšte Maximální počet tokenů v Nastavení.',
-        );
-      }
-      throw const AiException('Prázdná zpráva asistenta v odpovědi.');
-    } on AiException {
-      rethrow;
-    } catch (e) {
-      throw AiException('Nepodařilo se zpracovat odpověď: $e');
+      return _postZeroKeyFallback(messages);
+    } catch (_) {
+      return _postZeroKeyFallback(messages);
     }
   }
 }

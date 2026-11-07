@@ -60,11 +60,54 @@ class AppLauncherService {
     return _cache!;
   }
 
+  static const Set<String> _ignoredTokens = {
+    'com',
+    'org',
+    'net',
+    'edu',
+    'gov',
+    'info',
+    'www',
+    'http',
+    'https',
+    'app',
+    'apk',
+    'pro',
+    'lite',
+    'free',
+    'str',
+    'nku',
+    'stránku',
+    'stranku',
+    'stránka',
+    'stranka',
+    'web',
+    'aplikaci',
+    'aplikace',
+    'otevři',
+    'spusť',
+  };
+
   /// Best-matching app for a free-text [query]: exact package id, exact
   /// name, "starts with", "contains", then word-overlap scoring.
   Future<AppInfo?> findApp(String query) async {
-    final q = query.trim().toLowerCase();
+    final q = query
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'\b(aplikaci|aplikace|appku|app|program)\b'), '')
+        .trim();
     if (q.isEmpty) return null;
+    // Never treat domain URLs or web page requests as installed app queries!
+    if (q.contains('.com') ||
+        q.contains('.cz') ||
+        q.contains('.org') ||
+        q.contains('.net') ||
+        q.contains('.io') ||
+        q.contains('stránku') ||
+        q.contains('stranku') ||
+        q.contains('http')) {
+      return null;
+    }
     final apps = await installedApps();
     if (apps.isEmpty) return null;
 
@@ -72,29 +115,33 @@ class AppLauncherService {
       if (app.packageName.toLowerCase() == q) return app;
     }
     for (final app in apps) {
-      if (app.name.toLowerCase() == q) return app;
+      final cleanName = app.name.toLowerCase().replaceAll('.com', '').trim();
+      if (app.name.toLowerCase() == q || cleanName == q) return app;
     }
     for (final app in apps) {
-      if (app.name.toLowerCase().startsWith(q)) return app;
+      final cleanName = app.name.toLowerCase().replaceAll('.com', '').trim();
+      if (cleanName.startsWith(q)) return app;
     }
     for (final app in apps) {
-      if (app.name.toLowerCase().contains(q) ||
-          app.packageName.toLowerCase().contains(q)) {
+      final cleanName = app.name.toLowerCase().replaceAll('.com', '').trim();
+      if (q.length >= 3 && cleanName.contains(q)) {
         return app;
       }
     }
 
     // Token overlap fallback (handles "google maps" vs "Maps").
-    final tokens =
-        q.split(RegExp(r'[^a-z0-9]+')).where((t) => t.length > 2).toSet();
+    final tokens = q
+        .split(RegExp(r'[^\p{L}a-z0-9]+', unicode: true))
+        .where((t) => t.length > 2 && !_ignoredTokens.contains(t))
+        .toSet();
     if (tokens.isEmpty) return null;
     AppInfo? best;
     var bestScore = 0;
     for (final app in apps) {
-      final name = app.name.toLowerCase();
+      final cleanName = app.name.toLowerCase().replaceAll('.com', '').trim();
       var score = 0;
       for (final t in tokens) {
-        if (name.contains(t)) score++;
+        if (cleanName.contains(t)) score++;
       }
       if (score > bestScore) {
         bestScore = score;
