@@ -242,8 +242,9 @@ class JarvisService extends ChangeNotifier {
 
   void _keepAwake() {
     _awakeTimer?.cancel();
-    _awakeTimer = Timer(const Duration(seconds: 15), () {
-      if (_phase != JarvisPhase.executing) {
+    final windowSec = SettingsService.instance.geminiLiveVoiceMode ? 35 : 15;
+    _awakeTimer = Timer(Duration(seconds: windowSec), () {
+      if (_phase != JarvisPhase.executing && _phase != JarvisPhase.speaking && _phase != JarvisPhase.thinking) {
         _isAwake = false;
         _statusMessage = _shouldListenContinuously
             ? 'POHOTOVOST // ŘEKNĚTE „HEJ JARVIS“'
@@ -270,8 +271,8 @@ class JarvisService extends ChangeNotifier {
   }
 
   /// Engages immediate hands-free follow-up continuous listening after speaking.
-  /// Allows the user to ask follow-up questions or give consecutive commands
-  /// without repeating the wake word.
+  /// In Gemini Live Voice Mode, keeps a 30-second conversational session open
+  /// so the user can talk naturally back-and-forth without repeating any wake word.
   Future<void> _startFollowUpListening() async {
     _followUpSilenceTimer?.cancel();
     _speechSilenceTimer?.cancel();
@@ -279,13 +280,17 @@ class JarvisService extends ChangeNotifier {
     _wakeUp();
     _isInFollowUp = true;
     _phase = JarvisPhase.listening;
-    _statusMessage = 'NASLOUCHÁM // POLOŽTE DOPLŇUJÍCÍ DOTAZ NEBO PŘÍKAZ';
+    final isLive = SettingsService.instance.geminiLiveVoiceMode;
+    _statusMessage = isLive
+        ? 'ŽIVÝ ROZHOVOR (GEMINI LIVE) // MLUVTE VOLNĚ'
+        : 'NASLOUCHÁM // POLOŽTE DOPLŇUJÍCÍ DOTAZ NEBO PŘÍKAZ';
     notifyListeners();
 
     await startListening(manual: true);
 
-    // 7.5 second conversational window before standing down
-    _followUpSilenceTimer = Timer(const Duration(milliseconds: 7500), () {
+    // 30-second live conversational window in Gemini Live mode (or 10s standard)
+    final followUpMs = isLive ? 30000 : 10000;
+    _followUpSilenceTimer = Timer(Duration(milliseconds: followUpMs), () {
       _onFollowUpTimeout();
     });
   }
@@ -560,7 +565,17 @@ class JarvisService extends ChangeNotifier {
   }
 
   /// Toggles speech recognition manually via the UI.
+  /// Supports Gemini-Live style barge-in: tapping while Jarvis is speaking
+  /// immediately interrupts speech and opens the microphone for the user's next turn.
   Future<void> toggleListening() async {
+    if (_phase == JarvisPhase.speaking) {
+      await _voice.stopSpeaking();
+      _wakeUp();
+      await startListening(manual: true);
+      _statusMessage = 'PŘERUŠENO // NASLOUCHÁM VAŠÍ ODPOVĚDI';
+      notifyListeners();
+      return;
+    }
     if (_phase == JarvisPhase.listening) {
       await stopListening();
       if (_shouldListenContinuously) {
@@ -2386,20 +2401,17 @@ Mastering the boundless road.
       return;
     }
 
-    // 11b. Fast Live Web Search & Real-Time Information Filter
+    // 11b. Fast Live Web Search & Real-Time Information Filter (only explicit web search commands)
     final isWebSearch = lower.startsWith('search ') ||
         lower.startsWith('search for ') ||
         lower.startsWith('look up ') ||
         lower.startsWith('google ') ||
         lower.startsWith('find out ') ||
-        lower.startsWith('tell me about ') ||
         lower.startsWith('check online ') ||
-        lower.startsWith('who is ') ||
-        lower.startsWith('what is ') ||
-        lower.startsWith('where is ') ||
-        lower.startsWith('how much is ') ||
         lower.startsWith('vyhledej ') ||
-        lower.startsWith('najdi ') ||
+        lower.startsWith('vygoogli ') ||
+        lower.startsWith('najdi na internetu ') ||
+        lower.startsWith('najdi na webu ') ||
         lower.contains('search the web') ||
         lower.contains('search online');
 
@@ -2464,11 +2476,13 @@ Mastering the boundless road.
       intent = JarvisIntent.fallback(trimmed);
     }
 
-    // Save short-term dialog context
-    _dialogHistory.add({'role': 'user', 'content': trimmed});
-    _dialogHistory.add({'role': 'assistant', 'content': intent.spoken});
-    if (_dialogHistory.length > 10) {
-      _dialogHistory.removeRange(0, 2);
+    // Save short-term dialog context (for non-chat intents; chat intents record actual AI reply below)
+    if (intent.type != JarvisIntentType.chat) {
+      _dialogHistory.add({'role': 'user', 'content': trimmed});
+      _dialogHistory.add({'role': 'assistant', 'content': intent.spoken});
+      if (_dialogHistory.length > 20) {
+        _dialogHistory.removeRange(0, 2);
+      }
     }
 
     switch (intent.type) {
@@ -3172,23 +3186,35 @@ Mastering the boundless road.
         break;
 
       case JarvisIntentType.chat:
+        final role = _ai.classifyConversationRole(trimmed);
+        final targetModel = SettingsService.instance.effectiveModelForRole(role);
+        final roleBadge = SettingsService.roleShortBadge(role);
         String chatAnswer = intent.spoken;
         if (chatAnswer.trim().isEmpty ||
             chatAnswer.toLowerCase().contains('at your service') ||
             chatAnswer.toLowerCase().contains('k vašim službám') ||
             chatAnswer.toLowerCase().contains('what would you like me to do')) {
           _phase = JarvisPhase.thinking;
-          _statusMessage = 'ZPRACOVÁVÁM // NEURONOVÉ JÁDRO';
+          _statusMessage = '$roleBadge // MODEL: ${targetModel.toUpperCase()}';
           notifyListeners();
           try {
-            chatAnswer = await _ai.chat(message: trimmed, history: _dialogHistory);
+            chatAnswer = await _ai.liveVoiceChat(
+              message: trimmed,
+              history: _dialogHistory,
+            );
           } catch (_) {
-            chatAnswer = 'Jsem plně připraven, pane. Jaký další příkaz mám provést?';
+            chatAnswer = 'Slyším vás, pane. Jak na to navážeme?';
           }
+        }
+        _dialogHistory.add({'role': 'user', 'content': trimmed});
+        _dialogHistory.add({'role': 'assistant', 'content': chatAnswer});
+        if (_dialogHistory.length > 20) {
+          _dialogHistory.removeRange(0, 2);
         }
         _lastJarvisSpeech = chatAnswer;
         _phase = JarvisPhase.speaking;
-        _statusMessage = 'HLASOVÁ ODPOVĚĎ DOKONČENA';
+        final activeModel = _ai.lastUsedModel.toUpperCase();
+        _statusMessage = 'ŽIVÝ ROZHOVOR // $activeModel';
         notifyListeners();
         await _voice.speak(chatAnswer);
         break;

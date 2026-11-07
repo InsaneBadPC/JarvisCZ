@@ -402,10 +402,13 @@ class JarvisIntent {
     if (lower.startsWith('take a note') ||
         lower.startsWith('note down ') ||
         lower.startsWith('write a note') ||
+        lower.startsWith('zapiš poznámku') ||
+        lower.startsWith('ulož poznámku') ||
         lower.contains('search my notes') ||
         lower.contains('in my notes') ||
         lower.contains('what did i note') ||
-        lower.contains('poznámk')) {
+        lower.contains('moje poznámky') ||
+        lower.contains('v poznámkách')) {
       return JarvisIntent(
         type: JarvisIntentType.notes,
         spoken: 'Přistupuji k vaší osobní znalostní databázi, pane.',
@@ -421,7 +424,7 @@ class JarvisIntent {
         lower.startsWith('set a reminder') ||
         lower.contains('reminder for') ||
         lower.contains('kalendář') ||
-        lower.contains('připomeň')) {
+        lower.startsWith('připomeň mi')) {
       return JarvisIntent(
         type: JarvisIntentType.calendar,
         spoken: 'Přistupuji k vašemu kalendáři a připomenutím, pane.',
@@ -454,7 +457,10 @@ class JarvisIntent {
         lower.startsWith('send text') ||
         lower.startsWith('send sms') ||
         lower.startsWith('text to ') ||
-        lower.contains('zpráv')) {
+        lower.contains('přečti zpráv') ||
+        lower.contains('zkontroluj zpráv') ||
+        lower.startsWith('napiš zprávu') ||
+        lower.startsWith('pošli zprávu')) {
       return JarvisIntent(
         type: JarvisIntentType.message,
         spoken: 'Přistupuji ke komunikační telemetrii, pane.',
@@ -608,18 +614,18 @@ class JarvisIntent {
       );
     }
 
-    // Fast search check
+    // Fast search check (only explicit web search commands, so normal questions go to Gemini Live chat)
     if (lower.startsWith('search for ') ||
-        lower.startsWith('who is ') ||
-        lower.startsWith('what is ') ||
-        lower.startsWith('tell me about ') ||
         lower.startsWith('vyhledej ') ||
-        lower.startsWith('najdi ')) {
+        lower.startsWith('najdi na internetu ') ||
+        lower.startsWith('najdi na webu ') ||
+        lower.startsWith('vygoogli ')) {
       final query = lower
           .replaceFirst('search for ', '')
-          .replaceFirst('tell me about ', '')
           .replaceFirst('vyhledej ', '')
-          .replaceFirst('najdi ', '')
+          .replaceFirst('najdi na internetu ', '')
+          .replaceFirst('najdi na webu ', '')
+          .replaceFirst('vygoogli ', '')
           .trim();
       return JarvisIntent(
         type: JarvisIntentType.webSearch,
@@ -631,7 +637,8 @@ class JarvisIntent {
     if (lower.contains('volume up') ||
         lower.contains('louder') ||
         lower.contains('increase volume') ||
-        lower.contains('zesil')) {
+        lower.contains('zesil zvuk') ||
+        lower.contains('zvyš hlasitost')) {
       return const JarvisIntent(
         type: JarvisIntentType.system,
         spoken: 'Zvyšuji hlasitost, pane.',
@@ -641,14 +648,15 @@ class JarvisIntent {
     if (lower.contains('volume down') ||
         lower.contains('quieter') ||
         lower.contains('lower volume') ||
-        lower.contains('ztlum')) {
+        lower.contains('ztlum zvuk') ||
+        lower.contains('sniž hlasitost')) {
       return const JarvisIntent(
         type: JarvisIntentType.system,
         spoken: 'Snižuji hlasitost, pane.',
         systemCommand: 'volume_down',
       );
     }
-    if (lower.contains('mute') || lower.contains('silence') || lower.contains('ticho')) {
+    if (lower == 'mute' || lower == 'silence' || lower == 'ticho' || lower == 'ztlumit zvuk') {
       return const JarvisIntent(
         type: JarvisIntentType.system,
         spoken: 'Ztlumuji zvuk, pane.',
@@ -709,6 +717,21 @@ class AiService {
   static final AiService instance = AiService._();
 
   final http.Client _client = http.Client();
+
+  /// Tracks the most recently selected model and task role for HUD telemetry.
+  String lastUsedModel = 'gemini-2.0-flash';
+  AiTaskRole lastUsedRole = AiTaskRole.liveVoiceChat;
+
+  /// Automatically classifies whether a conversational prompt needs the fast
+  /// Live Voice Chat core or the Deep Reasoning & Coding core.
+  AiTaskRole classifyConversationRole(String prompt) {
+    final lower = prompt.toLowerCase();
+    final isComplex = RegExp(
+      r'\b(kód|program|python|dart|c\+\+|javascript|sql|algoritm|architektur|matemat|rovnic|spočítej|analyzuj|porovnej|hloubkov|podrobně|detailně|strategi|debug|oprav\s+chybu|navrhni\s+systém|code|algorithm|calculate|analyze|compare|architecture)\b',
+      caseSensitive: false,
+    ).hasMatch(lower) || prompt.length > 180;
+    return isComplex ? AiTaskRole.deepReasoning : AiTaskRole.liveVoiceChat;
+  }
 
   /// True for local backends (Ollama etc.) that accept any/empty API key.
   bool get _isLocalBackend {
@@ -817,15 +840,21 @@ V tomto režimu nemůžete přímo klepat na obrazovku. Pokud vás uživatel po�
             : '$systemPrompt\n\nGOAL: $goal\n\nCURRENT SCREEN:\n$screenDescription',
       },
     ];
-    return _postChatCompletion(messages, settings);
+    return _postChatCompletion(
+      messages,
+      settings,
+      role: AiTaskRole.visionAgent,
+    );
   }
 
   /// One plain conversational round trip (Chat mode).
   Future<String> chat({
     required String message,
     List<Map<String, String>> history = const [],
+    AiTaskRole? forceRole,
   }) {
     final settings = SettingsService.instance;
+    final role = forceRole ?? classifyConversationRole(message);
     final systemPrompt = buildChatSystemPrompt(message);
     final messages = <Map<String, String>>[
       if (settings.useSystemPrompt)
@@ -838,7 +867,40 @@ V tomto režimu nemůžete přímo klepat na obrazovku. Pokud vás uživatel po�
             : '$systemPrompt\n\n$message',
       },
     ];
-    return _postChatCompletion(messages, settings);
+    return _postChatCompletion(messages, settings, role: role);
+  }
+
+  /// Dedicated Gemini-Live style natural spoken conversation in JARVIS mode.
+  /// Automatically routes between [AiTaskRole.liveVoiceChat] (instant dialogue)
+  /// and [AiTaskRole.deepReasoning] (complex analytical/coding questions).
+  Future<String> liveVoiceChat({
+    required String message,
+    List<Map<String, String>> history = const [],
+  }) {
+    final settings = SettingsService.instance;
+    final role = classifyConversationRole(message);
+    final memory = ConversationalMemoryService.instance.buildMemoryContext();
+    final isDeep = role == AiTaskRole.deepReasoning;
+    final voicePrompt = '''
+Jsi Jarvis, živý, vysoce inteligentní, pohotový a charismatický hlasový AI parťák (režim plynulé hlasové konverzace jako Gemini Live).
+${memory.isNotEmpty ? '$memory\n' : ''}
+Mluvíš přímo s uživatelem v reálném čase česky s plnou diakritikou. Oslovuj ho přirozeně „pane“ (nebo jménem, pokud ho uvedl).
+PRAVIDLA ŽIVÉHO HLASOVÉHO ROZHOVORU:
+- Odpovídej přirozeně, lidsky, vtipně a k věci — jako skutečný živý společník v plynulém dialogu.
+- ${isDeep ? 'Uživatel položil hlubší nebo technický dotaz: poskytni jasné, přesné a srozumitelné vysvětlení ve 3 až 5 mluvených větách.' : 'Drž odpověď svižnou a konverzační (obvykle 1 až 3 plynulé věty), aby rozhovor odsýpal bez prodlev.'}
+- Nikdy nepoužívej hvězdičky Markdownu (*, **, #), odrážky ani číslované seznamy — tvůj výstup jde přímo do hlasového syntezátoru.
+- Nikdy nepoužívej robotická klišé („Jako AI model“, „Jistě, s tím vám mohu pomoci“, „K vašim službám, pane, co si přejete udělat“).
+- Navazuj na předchozí věty v historii rozhovoru a občas přirozeně nadhoď navazující myšlenku nebo otázku.
+''';
+    final recentHistory = history.length > 12
+        ? history.sublist(history.length - 12)
+        : history;
+    final messages = <Map<String, String>>[
+      {'role': 'system', 'content': voicePrompt},
+      ...recentHistory,
+      {'role': 'user', 'content': message},
+    ];
+    return _postChatCompletion(messages, settings, role: role);
   }
 
   /// Direct prompt generation utility for autonomous subsystem modules.
@@ -1066,7 +1128,11 @@ Respond with ONLY a single JSON object:
     ];
 
     try {
-      final raw = await _postChatCompletion(messages, settings);
+      final raw = await _postChatCompletion(
+        messages,
+        settings,
+        role: AiTaskRole.fastCommand,
+      );
       final clean = raw.trim();
       final start = clean.indexOf('{');
       final end = clean.lastIndexOf('}');
@@ -1261,7 +1327,11 @@ PRAVIDLA PRO HLASOVÝ PROJEV V ČEŠTINĚ:
     ];
 
     try {
-      final raw = await _postChatCompletion(messages, settings);
+      final raw = await _postChatCompletion(
+        messages,
+        settings,
+        role: AiTaskRole.webSynthesis,
+      );
       return raw.trim();
     } catch (_) {
       return toolResult;
@@ -1304,7 +1374,11 @@ Analyzujte poskytnutý obraz s mimořádnou podrobností a přesností.
     ];
 
     try {
-      final reply = await _postChatCompletion(messages, settings);
+      final reply = await _postChatCompletion(
+        messages,
+        settings,
+        role: AiTaskRole.visionAgent,
+      );
       return reply.trim();
     } catch (_) {
       return 'Prozkoumal jsem optický snímek, pane. Obraz zachycuje požadovaný objekt s vysokou ostrostí. Dejte mi vědět, pokud si přejete zpracovat konkrétní detail.';
@@ -1332,7 +1406,11 @@ Uživatel si prohlíží článek nebo obrazovku na svém zařízení a požáda
     ];
 
     try {
-      final reply = await _postChatCompletion(messages, settings);
+      final reply = await _postChatCompletion(
+        messages,
+        settings,
+        role: AiTaskRole.webSynthesis,
+      );
       return reply.trim();
     } catch (_) {
       final lines = screenText
@@ -1350,19 +1428,33 @@ Uživatel si prohlíží článek nebo obrazovku na svém zařízení a požáda
 
   /// Built-in zero-key AI fallback (Pollinations OpenAI-compatible gateway)
   /// so JARVIS always responds in natural Czech even before an API key is configured.
-  Future<String> _postZeroKeyFallback(List<Map<String, dynamic>> messages) async {
+  Future<String> _postZeroKeyFallback(
+    List<Map<String, dynamic>> messages, {
+    AiTaskRole role = AiTaskRole.liveVoiceChat,
+  }) async {
+    lastUsedRole = role;
+    lastUsedModel = role == AiTaskRole.deepReasoning
+        ? 'gpt-oss-reasoning'
+        : 'openai-fast';
     final uri = Uri.parse('https://text.pollinations.ai/openai/chat/completions');
-    final cleanMessages = messages.map((m) {
-      final role = (m['role'] ?? 'user').toString();
+
+    // Keep system prompt compact on the zero-key gateway so reasoning latency stays minimal (~2-4s)
+    final cleanMessages = <Map<String, String>>[];
+    for (final m in messages) {
+      final mRole = (m['role'] ?? 'user').toString();
       final content = m['content'];
-      final text = content is String ? content : jsonEncode(content);
-      return {'role': role, 'content': text};
-    }).toList();
+      var text = content is String ? content : jsonEncode(content);
+      if (mRole == 'system' && role != AiTaskRole.deepReasoning && text.length > 360) {
+        text =
+            'Jsi Jarvis, inteligentní a vtipný osobní hlasový AI parťák v telefonu. Odpovídej přirozeně, lidsky a plynule česky s diakritikou (1 až 3 věty bez hvězdiček Markdownu), oslovuj uživatele „pane“.';
+      }
+      cleanMessages.add({'role': mRole, 'content': text});
+    }
 
     final body = jsonEncode({
-      'model': 'openai',
+      'model': 'openai-fast',
       'messages': cleanMessages,
-      'temperature': 0.4,
+      'temperature': role == AiTaskRole.deepReasoning ? 0.3 : 0.6,
       'stream': false,
     });
 
@@ -1376,7 +1468,7 @@ Uživatel si prohlíží článek nebo obrazovku na svém zařízení a požáda
             },
             body: body,
           )
-          .timeout(const Duration(seconds: 20));
+          .timeout(const Duration(seconds: 18));
 
       if (res.statusCode == 200) {
         final decoded = jsonDecode(utf8.decode(res.bodyBytes));
@@ -1389,41 +1481,58 @@ Uživatel si prohlíží článek nebo obrazovku na svém zařízení a požáda
         }
       }
     } catch (_) {}
-    return 'Jsem připraven a plně k vašim službám, pane.';
+    return 'Slyším vás, pane. Momentálně čekám na odezvu vzdáleného neuronového uzlu — zopakujte prosím myšlenku nebo zadejte klíč API v Nastavení pro okamžitou odezvu.';
   }
 
-  /// Shared request/response plumbing for [complete], [chat], and [completeMultimodal].
+  /// Shared request/response plumbing with Multi-Model AI Routing per [AiTaskRole].
   Future<String> _postChatCompletion(
     List<Map<String, dynamic>> messages,
-    SettingsService settings,
-  ) async {
-    if ((settings.apiKey.isEmpty && !_isLocalBackend) ||
-        settings.baseUrl.isEmpty ||
-        settings.model.isEmpty) {
-      return _postZeroKeyFallback(messages);
+    SettingsService settings, {
+    AiTaskRole role = AiTaskRole.liveVoiceChat,
+  }) async {
+    lastUsedRole = role;
+
+    final useSecondary = settings.multiModelRoutingEnabled &&
+        settings.secondaryApiKey.isNotEmpty &&
+        settings.secondaryProvider != 'none' &&
+        settings.secondaryBaseUrl.isNotEmpty &&
+        (role == AiTaskRole.deepReasoning ||
+            role == AiTaskRole.visionAgent ||
+            (settings.apiKey.isEmpty && !_isLocalBackend));
+
+    final activeProvider = useSecondary ? settings.secondaryProvider : settings.provider;
+    final activeApiKey = useSecondary ? settings.secondaryApiKey : settings.apiKey;
+    final activeBaseUrl = useSecondary ? settings.secondaryBaseUrl : settings.baseUrl;
+    final activeModel = settings.effectiveModelForRole(role);
+
+    if ((activeApiKey.isEmpty && !_isLocalBackend) ||
+        activeBaseUrl.isEmpty ||
+        activeModel.isEmpty) {
+      return _postZeroKeyFallback(messages, role: role);
     }
 
-    final base = settings.baseUrl.replaceAll(RegExp(r'/+$'), '');
+    lastUsedModel = activeModel;
+    final base = activeBaseUrl.replaceAll(RegExp(r'/+$'), '');
     final uri = Uri.parse('$base/chat/completions');
 
     final headers = <String, String>{
       'Content-Type': 'application/json',
-      'Authorization': 'Bearer ${settings.apiKey}',
+      'Authorization': 'Bearer $activeApiKey',
       'User-Agent':
           'Mozilla/5.0 (Linux; Android 14) '
           'AppleWebKit/537.36 (KHTML, like Gecko) '
           'Chrome/120.0.0.0 Mobile Safari/537.36',
-      if (settings.provider == 'openrouter') ...{
+      if (activeProvider == 'openrouter') ...{
         'HTTP-Referer': 'https://privateagent.local',
-        'X-Title': 'PrivateAgent',
+        'X-Title': 'JARVIS',
       },
     };
 
     final body = jsonEncode({
-      'model': settings.model,
+      'model': activeModel,
       'messages': messages,
       'max_tokens': settings.maxTokens,
-      'temperature': settings.temperature,
+      'temperature': role == AiTaskRole.deepReasoning ? 0.25 : settings.temperature,
       'stream': false,
     });
 
@@ -1433,18 +1542,18 @@ Uživatel si prohlíží článek nebo obrazovku na svém zařízení a požáda
           .post(uri, headers: headers, body: body)
           .timeout(const Duration(seconds: 25));
     } catch (_) {
-      return _postZeroKeyFallback(messages);
+      return _postZeroKeyFallback(messages, role: role);
     }
 
     if (res.statusCode != 200) {
-      return _postZeroKeyFallback(messages);
+      return _postZeroKeyFallback(messages, role: role);
     }
 
     try {
       final decoded = jsonDecode(utf8.decode(res.bodyBytes));
       final choices = decoded['choices'];
       if (choices is! List || choices.isEmpty) {
-        return _postZeroKeyFallback(messages);
+        return _postZeroKeyFallback(messages, role: role);
       }
       final choice = choices[0];
       final content = choice?['message']?['content'];
@@ -1455,9 +1564,9 @@ Uživatel si prohlíží článek nebo obrazovku na svém zařízení a požáda
             .join();
         if (joined.trim().isNotEmpty) return joined;
       }
-      return _postZeroKeyFallback(messages);
+      return _postZeroKeyFallback(messages, role: role);
     } catch (_) {
-      return _postZeroKeyFallback(messages);
+      return _postZeroKeyFallback(messages, role: role);
     }
   }
 }

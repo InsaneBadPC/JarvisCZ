@@ -24,10 +24,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late final TextEditingController _baseUrlController;
   late final TextEditingController _apiKeyController;
   late final TextEditingController _modelController;
+  late final TextEditingController _secondaryApiKeyController;
+  late final Map<AiTaskRole, TextEditingController> _roleModelControllers;
   late final TextEditingController _tokenController;
   late final TextEditingController _chatsController;
 
   bool _obscureKey = true;
+  bool _obscureSecondaryKey = true;
   bool _obscureToken = true;
 
   String _lastSyncedProvider = '';
@@ -38,6 +41,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _baseUrlController = TextEditingController(text: _settings.baseUrl);
     _apiKeyController = TextEditingController(text: _settings.apiKey);
     _modelController = TextEditingController(text: _settings.model);
+    _secondaryApiKeyController =
+        TextEditingController(text: _settings.secondaryApiKey);
+    _roleModelControllers = {
+      for (final r in AiTaskRole.values)
+        r: TextEditingController(text: _settings.customModelForRole(r)),
+    };
     _tokenController = TextEditingController(text: _settings.telegramToken);
     _chatsController =
         TextEditingController(text: _settings.telegramAllowedChats.join(', '));
@@ -51,6 +60,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _baseUrlController,
       _apiKeyController,
       _modelController,
+      _secondaryApiKeyController,
+      ..._roleModelControllers.values,
     ]) {
       c.addListener(_onAiFieldChanged);
     }
@@ -74,6 +85,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _baseUrlController,
       _apiKeyController,
       _modelController,
+      _secondaryApiKeyController,
+      ..._roleModelControllers.values,
     ]) {
       c.removeListener(_onAiFieldChanged);
     }
@@ -86,6 +99,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _baseUrlController.dispose();
     _apiKeyController.dispose();
     _modelController.dispose();
+    _secondaryApiKeyController.dispose();
+    for (final c in _roleModelControllers.values) {
+      c.dispose();
+    }
     _tokenController.dispose();
     _chatsController.dispose();
     super.dispose();
@@ -120,7 +137,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool get _aiDirty =>
       _baseUrlController.text.trim() != _settings.baseUrl ||
       _apiKeyController.text.trim() != _settings.apiKey ||
-      _modelController.text.trim() != _settings.model;
+      _modelController.text.trim() != _settings.model ||
+      _secondaryApiKeyController.text.trim() != _settings.secondaryApiKey ||
+      AiTaskRole.values.any(
+        (r) =>
+            _roleModelControllers[r]!.text.trim() !=
+            _settings.customModelForRole(r),
+      );
 
   bool get _telegramDirty =>
       _tokenController.text.trim() != _settings.telegramToken ||
@@ -161,6 +184,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await _settings.setBaseUrl(_baseUrlController.text);
     await _settings.setApiKey(_apiKeyController.text);
     await _settings.setModel(_modelController.text);
+    await _settings.setSecondaryApiKey(_secondaryApiKeyController.text);
+    for (final r in AiTaskRole.values) {
+      await _settings.setCustomModelForRole(r, _roleModelControllers[r]!.text);
+    }
     if (!mounted) return;
     setState(() {});
     ScaffoldMessenger.of(context)
@@ -171,7 +198,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             children: [
               Icon(Icons.check_circle_outline, color: Colors.greenAccent, size: 20),
               SizedBox(width: 10),
-              Text('Nastavení poskytovatele AI bylo úspěšně uloženo'),
+              Text('Nastavení AI modelů a směrovače uloženo'),
             ],
           ),
           duration: const Duration(seconds: 2),
@@ -447,6 +474,86 @@ class _SettingsScreenState extends State<SettingsScreen> {
             displayValue: _settings.maxTokens.toString(),
             onChanged: (v) => _settings.setMaxTokens(v.round()),
           ),
+          const SizedBox(height: 14),
+          const Divider(height: 1),
+          const SizedBox(height: 10),
+          GlassSwitchTile(
+            title: 'Hlasový režim Gemini Live',
+            subtitle: 'Plynulý obousměrný rozhovor bez nutnosti říkat „Hej Jarvis“ a s okamžitým skočením do řeči',
+            icon: Icons.graphic_eq_rounded,
+            value: _settings.geminiLiveVoiceMode,
+            onChanged: (v) => _settings.setGeminiLiveVoiceMode(v),
+          ),
+          const SizedBox(height: 6),
+          GlassSwitchTile(
+            title: 'Více-modelový AI směrovač',
+            subtitle: 'Automaticky vybírá specializované modely podle typu úlohy (hlas, kód a uvažování, příkazy, vize, web)',
+            icon: Icons.hub_rounded,
+            value: _settings.multiModelRoutingEnabled,
+            onChanged: (v) => _settings.setMultiModelRoutingEnabled(v),
+          ),
+          if (_settings.multiModelRoutingEnabled) ...[
+            const SizedBox(height: 12),
+            const Text(
+              'Přiřazení modelů pro jednotlivé úlohy (prázdné = automatický výběr)',
+              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 10),
+            for (final role in AiTaskRole.values) ...[
+              GlassTextField(
+                controller: _roleModelControllers[role]!,
+                labelText: SettingsService.roleTitle(role),
+                hintText:
+                    'Auto: ${_settings.effectiveModelForRole(role)}',
+                prefixIcon: const Icon(Icons.memory_rounded, size: 18),
+              ),
+              const SizedBox(height: 10),
+            ],
+            const SizedBox(height: 6),
+            const Text(
+              'Sekundární poskytovatel AI pro hluboké uvažování / vizi (volitelné)',
+              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                GlassPill(
+                  label: 'Stejný jako hlavní',
+                  isSelected: _settings.secondaryProvider == 'none',
+                  onTap: () => _settings.setSecondaryProvider('none'),
+                ),
+                for (final entry in SettingsService.providers.entries)
+                  if (entry.key != 'custom')
+                    GlassPill(
+                      label: entry.value.label,
+                      isSelected: _settings.secondaryProvider == entry.key,
+                      onTap: () => _settings.setSecondaryProvider(entry.key),
+                    ),
+              ],
+            ),
+            if (_settings.secondaryProvider != 'none') ...[
+              const SizedBox(height: 10),
+              GlassTextField(
+                controller: _secondaryApiKeyController,
+                labelText: 'Sekundární klíč API (${SettingsService.providers[_settings.secondaryProvider]?.label ?? _settings.secondaryProvider})',
+                obscureText: _obscureSecondaryKey,
+                prefixIcon: const Icon(Icons.key_rounded, size: 18),
+                suffixIcon: IconButton(
+                  icon: Icon(
+                    _obscureSecondaryKey
+                        ? Icons.visibility_outlined
+                        : Icons.visibility_off_outlined,
+                    size: 18,
+                  ),
+                  onPressed: () => setState(
+                    () => _obscureSecondaryKey = !_obscureSecondaryKey,
+                  ),
+                ),
+              ),
+            ],
+          ],
         ],
       ),
     );

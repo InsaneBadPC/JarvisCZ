@@ -18,6 +18,20 @@ enum AppMode { agent, chat, jarvis }
 /// - [jarvis]: Jarvis (3D Iron Man hologram suit avatar with reactive telemetry).
 enum JarvisScreenStyle { arcReactor, jarvis }
 
+/// Specialized AI task roles for Multi-Model Routing in JARVIS.
+enum AiTaskRole {
+  /// Live natural two-way voice conversation (Gemini Live style, low latency).
+  liveVoiceChat,
+  /// Deep reasoning, coding, math, architecture, and complex analytical questions.
+  deepReasoning,
+  /// Fast intent routing, system commands, and tool dispatch.
+  fastCommand,
+  /// Multimodal camera vision ("Oko Jarvise"), OCR, and UI screen automation.
+  visionAgent,
+  /// Live web search synthesis, news briefings, weather, and message drafting.
+  webSynthesis,
+}
+
 /// Central, observable store for all user-configurable settings.
 ///
 /// Backed by SharedPreferences. Access via [SettingsService.instance] after
@@ -45,25 +59,35 @@ class SettingsService extends ChangeNotifier {
   /// Well-known OpenAI-compatible providers.
   static const Map<String, ({String label, String baseUrl, String model})>
   providers = {
-    'deepseek': (
-      label: 'DeepSeek',
-      baseUrl: 'https://api.deepseek.com/v1',
-      model: 'deepseek-chat',
+    'gemini': (
+      label: 'Google Gemini',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+      model: 'gemini-2.0-flash',
     ),
     'openai': (
       label: 'OpenAI',
       baseUrl: 'https://api.openai.com/v1',
       model: 'gpt-4o-mini',
     ),
-    'gemini': (
-      label: 'Google Gemini',
-      baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-      model: 'gemini-2.0-flash',
+    'deepseek': (
+      label: 'DeepSeek',
+      baseUrl: 'https://api.deepseek.com/v1',
+      model: 'deepseek-chat',
+    ),
+    'groq': (
+      label: 'Groq (bleskový)',
+      baseUrl: 'https://api.groq.com/openai/v1',
+      model: 'llama-3.3-70b-versatile',
     ),
     'openrouter': (
-      label: 'OpenRouter',
+      label: 'OpenRouter (všechny modely)',
       baseUrl: 'https://openrouter.ai/api/v1',
-      model: 'openai/gpt-4o-mini',
+      model: 'google/gemini-2.0-flash-001',
+    ),
+    'anthropic': (
+      label: 'Anthropic Claude',
+      baseUrl: 'https://api.anthropic.com/v1',
+      model: 'claude-3-7-sonnet-latest',
     ),
     'nvidia': (
       label: 'NVIDIA NIM',
@@ -77,6 +101,190 @@ class SettingsService extends ChangeNotifier {
     ),
     'custom': (label: 'Vlastní (OpenAI-kompatibilní)', baseUrl: '', model: ''),
   };
+
+  /// Human-readable Czech title for each [AiTaskRole].
+  static String roleTitle(AiTaskRole role) {
+    switch (role) {
+      case AiTaskRole.liveVoiceChat:
+        return 'Živý hlasový rozhovor (Gemini Live)';
+      case AiTaskRole.deepReasoning:
+        return 'Hluboké uvažování, kód a analýzy';
+      case AiTaskRole.fastCommand:
+        return 'Rychlé příkazy a ovládání systému';
+      case AiTaskRole.visionAgent:
+        return 'Vize, kamera a čtení obrazovky';
+      case AiTaskRole.webSynthesis:
+        return 'Webové vyhledávání, zprávy a texty';
+    }
+  }
+
+  /// Short HUD badge for each [AiTaskRole].
+  static String roleShortBadge(AiTaskRole role) {
+    switch (role) {
+      case AiTaskRole.liveVoiceChat:
+        return 'KONVERZAČNÍ JÁDRO';
+      case AiTaskRole.deepReasoning:
+        return 'ANALYTICKÉ JÁDRO';
+      case AiTaskRole.fastCommand:
+        return 'RYCHLÉ SMĚROVÁNÍ';
+      case AiTaskRole.visionAgent:
+        return 'OPTICKÉ JÁDRO VIZE';
+      case AiTaskRole.webSynthesis:
+        return 'WEBOVÁ SYNTÉZA';
+    }
+  }
+
+  /// Default specialized model per provider and [AiTaskRole].
+  static String defaultModelForRole(String providerKey, AiTaskRole role, String fallbackModel) {
+    switch (providerKey) {
+      case 'gemini':
+        switch (role) {
+          case AiTaskRole.liveVoiceChat:
+            return 'gemini-2.0-flash';
+          case AiTaskRole.deepReasoning:
+            return 'gemini-2.5-pro-preview-03-25';
+          case AiTaskRole.fastCommand:
+            return 'gemini-2.0-flash-lite';
+          case AiTaskRole.visionAgent:
+            return 'gemini-2.0-flash';
+          case AiTaskRole.webSynthesis:
+            return 'gemini-2.0-flash';
+        }
+      case 'openai':
+        switch (role) {
+          case AiTaskRole.liveVoiceChat:
+            return 'gpt-4o-mini';
+          case AiTaskRole.deepReasoning:
+            return 'o3-mini';
+          case AiTaskRole.fastCommand:
+            return 'gpt-4o-mini';
+          case AiTaskRole.visionAgent:
+            return 'gpt-4o';
+          case AiTaskRole.webSynthesis:
+            return 'gpt-4o-mini';
+        }
+      case 'deepseek':
+        switch (role) {
+          case AiTaskRole.liveVoiceChat:
+            return 'deepseek-chat';
+          case AiTaskRole.deepReasoning:
+            return 'deepseek-reasoner';
+          case AiTaskRole.fastCommand:
+            return 'deepseek-chat';
+          case AiTaskRole.visionAgent:
+            return 'deepseek-chat';
+          case AiTaskRole.webSynthesis:
+            return 'deepseek-chat';
+        }
+      case 'groq':
+        switch (role) {
+          case AiTaskRole.liveVoiceChat:
+            return 'llama-3.3-70b-versatile';
+          case AiTaskRole.deepReasoning:
+            return 'deepseek-r1-distill-llama-70b';
+          case AiTaskRole.fastCommand:
+            return 'llama-3.1-8b-instant';
+          case AiTaskRole.visionAgent:
+            return 'llama-3.2-90b-vision-preview';
+          case AiTaskRole.webSynthesis:
+            return 'llama-3.3-70b-versatile';
+        }
+      case 'openrouter':
+        switch (role) {
+          case AiTaskRole.liveVoiceChat:
+            return 'google/gemini-2.0-flash-001';
+          case AiTaskRole.deepReasoning:
+            return 'deepseek/deepseek-r1';
+          case AiTaskRole.fastCommand:
+            return 'openai/gpt-4o-mini';
+          case AiTaskRole.visionAgent:
+            return 'google/gemini-2.0-flash-001';
+          case AiTaskRole.webSynthesis:
+            return 'anthropic/claude-3.5-haiku';
+        }
+      case 'anthropic':
+        switch (role) {
+          case AiTaskRole.liveVoiceChat:
+            return 'claude-3-5-haiku-latest';
+          case AiTaskRole.deepReasoning:
+            return 'claude-3-7-sonnet-latest';
+          case AiTaskRole.fastCommand:
+            return 'claude-3-5-haiku-latest';
+          case AiTaskRole.visionAgent:
+            return 'claude-3-7-sonnet-latest';
+          case AiTaskRole.webSynthesis:
+            return 'claude-3-5-haiku-latest';
+        }
+      default:
+        return fallbackModel.isNotEmpty ? fallbackModel : 'deepseek-chat';
+    }
+  }
+
+  /// Whether Jarvis automatically routes different tasks to specialized AI models.
+  bool get multiModelRoutingEnabled =>
+      _prefs?.getBool('ai_multi_model_routing') ?? true;
+  Future<void> setMultiModelRoutingEnabled(bool value) async {
+    await _prefs?.setBool('ai_multi_model_routing', value);
+    notifyListeners();
+  }
+
+  /// Whether Jarvis operates in continuous Gemini-Live style two-way conversational mode.
+  bool get geminiLiveVoiceMode =>
+      _prefs?.getBool('jarvis_gemini_live_mode') ?? true;
+  Future<void> setGeminiLiveVoiceMode(bool value) async {
+    await _prefs?.setBool('jarvis_gemini_live_mode', value);
+    notifyListeners();
+  }
+
+  /// Returns user-configured custom model for [role], or empty string if using automatic default.
+  String customModelForRole(AiTaskRole role) =>
+      _prefs?.getString('ai_role_model_${role.name}') ?? '';
+
+  /// Returns the effective model name for [role].
+  String effectiveModelForRole(AiTaskRole role) {
+    if (!multiModelRoutingEnabled) return model;
+    final custom = customModelForRole(role).trim();
+    if (custom.isNotEmpty) return custom;
+    final useSecondary =
+        (role == AiTaskRole.deepReasoning || role == AiTaskRole.visionAgent) &&
+        secondaryApiKey.isNotEmpty &&
+        secondaryProvider != 'none';
+    final activeProv = useSecondary ? secondaryProvider : provider;
+    return defaultModelForRole(activeProv, role, model);
+  }
+
+  Future<void> setCustomModelForRole(AiTaskRole role, String value) async {
+    await _prefs?.setString('ai_role_model_${role.name}', value.trim());
+    notifyListeners();
+  }
+
+  /// Optional Secondary AI Provider (e.g., combine Gemini for fast voice + DeepSeek/OpenAI for deep reasoning).
+  String get secondaryProvider =>
+      _prefs?.getString('ai_secondary_provider') ?? 'none';
+  Future<void> setSecondaryProvider(String value) async {
+    await _prefs?.setString('ai_secondary_provider', value);
+    final preset = providers[value];
+    if (preset != null && preset.baseUrl.isNotEmpty) {
+      await _prefs?.setString('ai_secondary_base_url', preset.baseUrl);
+    }
+    notifyListeners();
+  }
+
+  String get secondaryBaseUrl =>
+      _prefs?.getString('ai_secondary_base_url') ??
+      providers[secondaryProvider]?.baseUrl ??
+      '';
+  Future<void> setSecondaryBaseUrl(String value) async {
+    await _prefs?.setString('ai_secondary_base_url', value.trim());
+    notifyListeners();
+  }
+
+  String get secondaryApiKey =>
+      _prefs?.getString('ai_secondary_api_key') ?? '';
+  Future<void> setSecondaryApiKey(String value) async {
+    await _prefs?.setString('ai_secondary_api_key', value.trim());
+    notifyListeners();
+  }
 
   String get provider => _prefs?.getString('ai_provider') ?? 'deepseek';
   Future<void> setProvider(String value) async {
