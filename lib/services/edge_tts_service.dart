@@ -505,7 +505,15 @@ class EdgeTtsService {
   /// Synthesizes [text] using Edge Neural TTS and writes the resulting MP3
   /// into the device cache directory. Returns the local [File].
   Future<File?> synthesize(String text, {String? voice}) async {
-    final selectedVoice = voice ?? SettingsService.instance.jarvisNeuralVoice;
+    var selectedVoice = voice ?? SettingsService.instance.jarvisNeuralVoice;
+    // Automatically ensure a Czech neural voice when speaking Czech text
+    // or if an older English voice identifier was persisted.
+    final hasCzechChars = RegExp(r'[ěščřžýáíéúůďťňĚŠČŘŽÝÁÍÉÚŮĎŤŇ]').hasMatch(text);
+    if (!selectedVoice.startsWith('cs-') && (voice == null || hasCzechChars)) {
+      selectedVoice = selectedVoice.contains('Emily') || selectedVoice.contains('Sonia') || selectedVoice.contains('Jenny')
+          ? 'cs-CZ-VlastaNeural'
+          : 'cs-CZ-AntoninNeural';
+    }
 
     // Fast-path: Check disk cache
     final cacheDir = await getTemporaryDirectory();
@@ -539,7 +547,7 @@ class EdgeTtsService {
           'Cache-Control': 'no-cache',
           'Origin': 'chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold',
           'Accept-Encoding': 'gzip, deflate, br, zstd',
-          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept-Language': 'cs-CZ,cs;q=0.9,en-US;q=0.8',
           'Cookie': 'muid=${_generateMuid()};',
         },
       ).timeout(const Duration(seconds: 7));

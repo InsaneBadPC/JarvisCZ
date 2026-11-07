@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'edge_tts_service.dart';
+import 'voice_service.dart';
 import 'system_control_service.dart';
 
 /// 🖐️ Iron Man Zero-Touch Air Gestures Service
@@ -68,7 +68,7 @@ class AirGestureService extends ChangeNotifier {
           : 'Senzor přiblížení není dostupný. Simulovaná gesta jsou připravena.';
       notifyListeners();
       if (_voiceFeedback) {
-        unawaited(EdgeTtsService.instance.speak(
+        unawaited(VoiceService.instance.speak(
           'Bezdotyková vzdušná gesta aktivována, pane. Senzory monitorují prostor nad displejem.',
         ));
       }
@@ -90,7 +90,7 @@ class AirGestureService extends ChangeNotifier {
     _statusMessage = 'Vzdušná gesta jsou vypnutá';
     notifyListeners();
     if (_voiceFeedback) {
-      unawaited(EdgeTtsService.instance.speak(
+      unawaited(VoiceService.instance.speak(
         'Senzory vzdušných gest deaktivovány, pane.',
       ));
     }

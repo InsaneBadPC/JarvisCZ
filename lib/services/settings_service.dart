@@ -249,10 +249,14 @@ class SettingsService extends ChangeNotifier {
 
   /// Studio Neural Voice (Edge-TTS) for ultra-realistic human speech.
   /// Defaults to cs-CZ-AntoninNeural (Czech male neural JARVIS voice).
-  String get jarvisNeuralVoice =>
-      _prefs?.getString('jarvis_neural_voice') ?? 'cs-CZ-AntoninNeural';
+  String get jarvisNeuralVoice {
+    final stored = _prefs?.getString('jarvis_neural_voice_cz');
+    if (stored != null && stored.isNotEmpty) return stored;
+    return 'cs-CZ-AntoninNeural';
+  }
+
   Future<void> setJarvisNeuralVoice(String value) async {
-    await _prefs?.setString('jarvis_neural_voice', value);
+    await _prefs?.setString('jarvis_neural_voice_cz', value);
     notifyListeners();
   }
 

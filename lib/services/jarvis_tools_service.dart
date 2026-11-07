@@ -46,9 +46,9 @@ class JarvisToolsService {
     // 1. Google News RSS
     try {
       final gUrl = cleanTopic.isEmpty
-          ? Uri.parse('https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en')
+          ? Uri.parse('https://news.google.com/rss?hl=cs&gl=CZ&ceid=CZ:cs')
           : Uri.parse(
-              'https://news.google.com/rss/search?q=${Uri.encodeComponent(cleanTopic)}&hl=en-US&gl=US&ceid=US:en',
+              'https://news.google.com/rss/search?q=${Uri.encodeComponent(cleanTopic)}&hl=cs&gl=CZ&ceid=CZ:cs',
             );
 
       final resp = await _client.get(
@@ -230,7 +230,7 @@ class JarvisToolsService {
       // 3. Google News RSS Headlines
       (() async {
         try {
-          final gUrl = Uri.parse('https://news.google.com/rss/search?q=$encoded&hl=en-US&gl=US&ceid=US:en');
+          final gUrl = Uri.parse('https://news.google.com/rss/search?q=$encoded&hl=cs&gl=CZ&ceid=CZ:cs');
           final resp = await _client.get(gUrl, headers: {'User-Agent': 'Mozilla/5.0'}).timeout(const Duration(seconds: 4));
           if (resp.statusCode == 200) {
             final xml = resp.body;

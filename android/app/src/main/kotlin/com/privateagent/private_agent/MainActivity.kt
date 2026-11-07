@@ -365,10 +365,10 @@ class MainActivity : FlutterActivity() {
         val currentMa = Math.abs(currentUa) / 1000
 
         val chargeType = when (plugged) {
-            BatteryManager.BATTERY_PLUGGED_AC -> "AC Turbo / Wall Adapter"
-            BatteryManager.BATTERY_PLUGGED_USB -> "USB Bus Terminal"
-            BatteryManager.BATTERY_PLUGGED_WIRELESS -> "Wireless Inductive Flux"
-            else -> if (isCharging) "Direct Power Line" else "Internal Arc Core"
+            BatteryManager.BATTERY_PLUGGED_AC -> "Síťový adaptér AC Turbo"
+            BatteryManager.BATTERY_PLUGGED_USB -> "Sběrnice USB"
+            BatteryManager.BATTERY_PLUGGED_WIRELESS -> "Bezdrátová indukce"
+            else -> if (isCharging) "Přímé napájení" else "Interní obloukové jádro"
         }
 
         val volts = if (voltageMv > 0) voltageMv / 1000.0 else 4.0
@@ -423,6 +423,10 @@ class MainActivity : FlutterActivity() {
     private fun containsWakeWord(text: String): Boolean {
         val lower = text.lowercase()
         return lower.contains("jarvis") ||
+               lower.contains("jarvisi") ||
+               lower.contains("jarvisu") ||
+               lower.contains("džarvis") ||
+               lower.contains("dzarvis") ||
                lower.contains("javis") ||
                lower.contains("jervis") ||
                lower.contains("jarves") ||
@@ -664,6 +668,8 @@ class MainActivity : FlutterActivity() {
     private fun buildRecognitionIntent(): Intent {
         return Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "cs-CZ")
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "cs-CZ")
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)

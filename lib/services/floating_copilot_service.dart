@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'ai_service.dart';
-import 'edge_tts_service.dart';
+import 'voice_service.dart';
 import 'screen_automation_service.dart';
 
 /// Structured analysis of on-screen content performed by Holographic Floating Co-Pilot.
@@ -63,7 +63,7 @@ class FloatingCopilotService extends ChangeNotifier {
 
       _isActive = true;
       notifyListeners();
-      unawaited(EdgeTtsService.instance.speak(
+      unawaited(VoiceService.instance.speak(
         'Holografický plovoucí kopilot aktivní, pane. Jsem připraven nad aktivními displeji.',
       ));
       return true;
@@ -81,7 +81,7 @@ class FloatingCopilotService extends ChangeNotifier {
     } catch (_) {}
     _isActive = false;
     notifyListeners();
-    unawaited(EdgeTtsService.instance.speak('Plovoucí kopilot ukončen, pane.'));
+    unawaited(VoiceService.instance.speak('Plovoucí kopilot ukončen, pane.'));
   }
 
   /// Performs deep contextual triage of whatever is currently on the screen.

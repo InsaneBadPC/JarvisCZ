@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'edge_tts_service.dart';
+import 'voice_service.dart';
 
 /// ⚡ Arc Reactor Charging Telemetry Service
 ///
@@ -46,17 +46,17 @@ class ChargingTelemetryService extends ChangeNotifier {
     if (call.method == 'onPowerConnected') {
       final args = call.arguments;
       if (args is Map) {
-        _applyTelemetryMap(args, connected: true);
+        _applyTelemetryMap(args, connected: true, announce: true);
       }
     } else if (call.method == 'onPowerDisconnected') {
       final args = call.arguments;
       if (args is Map) {
-        _applyTelemetryMap(args, connected: false);
+        _applyTelemetryMap(args, connected: false, announce: true);
       }
     }
   }
 
-  void _applyTelemetryMap(Map data, {required bool connected}) {
+  void _applyTelemetryMap(Map data, {required bool connected, bool announce = false}) {
     _isCharging = connected;
     _batteryLevel = (data['batteryLevel'] as num?)?.toInt() ?? _batteryLevel;
     _voltageMv = (data['voltageMv'] as num?)?.toInt() ?? 4100;
@@ -66,18 +66,21 @@ class ChargingTelemetryService extends ChangeNotifier {
     _wattage = (data['wattage'] as num?)?.toDouble() ?? (_voltageMv / 1000.0 * 2.5);
 
     if (connected) {
-      _lastCoupledTime = DateTime.now();
-      showCinematicHud.value = true;
-      if (_voiceAnnouncements) {
-        final wattStr = _wattage > 0 ? '${_wattage.toStringAsFixed(1)} wattů' : 'nominální úrovni';
-        final tempStr = _temperatureC > 0 ? ', teplota jádra je ${_temperatureC.toStringAsFixed(1)} °C' : '';
-        unawaited(EdgeTtsService.instance.speak(
-          'Obloukový reaktor připojen, pane. Příjem energie aktivní na $wattStr. Energetické články jsou na $_batteryLevel procentech$tempStr.',
-        ));
+      _lastCoupledTime ??= DateTime.now();
+      if (announce) {
+        _lastCoupledTime = DateTime.now();
+        showCinematicHud.value = true;
+        if (_voiceAnnouncements) {
+          final wattStr = _wattage > 0 ? '${_wattage.toStringAsFixed(1)} wattů' : 'nominální úrovni';
+          final tempStr = _temperatureC > 0 ? ', teplota jádra je ${_temperatureC.toStringAsFixed(1)} °C' : '';
+          unawaited(VoiceService.instance.speak(
+            'Obloukový reaktor připojen, pane. Příjem energie aktivní na $wattStr. Energetické články jsou na $_batteryLevel procentech$tempStr.',
+          ));
+        }
       }
     } else {
-      if (_voiceAnnouncements) {
-        unawaited(EdgeTtsService.instance.speak(
+      if (announce && _voiceAnnouncements) {
+        unawaited(VoiceService.instance.speak(
           'Obloukový reaktor odpojen, pane. Systém běží na interní rezervy s $_batteryLevel procenty energie.',
         ));
       }
@@ -90,7 +93,7 @@ class ChargingTelemetryService extends ChangeNotifier {
     try {
       final res = await _channel.invokeMapMethod<String, dynamic>('getChargingTelemetry');
       if (res != null) {
-        _applyTelemetryMap(res, connected: res['isCharging'] == true);
+        _applyTelemetryMap(res, connected: res['isCharging'] == true, announce: false);
         return res;
       }
     } catch (_) {}

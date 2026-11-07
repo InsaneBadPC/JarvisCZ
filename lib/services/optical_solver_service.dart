@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'ai_service.dart';
-import 'edge_tts_service.dart';
+import 'voice_service.dart';
 import 'vision_perception_service.dart';
 
 /// Supported problem domains for Optical HUD Solver.
@@ -124,7 +124,7 @@ Formátuj jako JSON:
         timestamp: DateTime.now(),
       );
 
-      unawaited(EdgeTtsService.instance.speak(spoken));
+      unawaited(VoiceService.instance.speak(spoken));
       return _lastResult!;
     } catch (e) {
       _lastResult = OpticalSolveResult(
