@@ -4,11 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../services/air_gesture_service.dart';
+import '../services/charging_telemetry_service.dart';
 import '../services/jarvis_service.dart';
 import '../services/macro_recorder_service.dart';
 import '../services/proactive_agent_service.dart';
 import '../services/settings_service.dart';
 import 'air_gestures_hud_widget.dart';
+import 'arc_reactor_charging_dialog.dart';
 import 'brain_dump_dialog.dart';
 
 /// Next-Generation Stark Industries J.A.R.V.I.S. 3D Hologram Consciousness Core.
@@ -611,6 +613,14 @@ class _JarvisHudWidgetState extends State<JarvisHudWidget>
                                     final next = isArc ? JarvisScreenStyle.jarvis : JarvisScreenStyle.arcReactor;
                                     SettingsService.instance.setJarvisScreenStyle(next);
                                   },
+                                  onLongPress: () {
+                                    HapticFeedback.heavyImpact();
+                                    showDialog(
+                                      context: context,
+                                      barrierColor: Colors.black.withValues(alpha: 0.72),
+                                      builder: (_) => const ArcReactorChargingDialog(),
+                                    );
+                                  },
                                   child: Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
                                     decoration: BoxDecoration(
@@ -645,6 +655,51 @@ class _JarvisHudWidgetState extends State<JarvisHudWidget>
                                   ),
                                 );
                               },
+                            ),
+                            const SizedBox(width: 8),
+
+                            // 5b. 3D Arc Reactor Power Telemetry Console
+                            GestureDetector(
+                              onTap: () {
+                                HapticFeedback.mediumImpact();
+                                showDialog(
+                                  context: context,
+                                  barrierColor: Colors.black.withValues(alpha: 0.72),
+                                  builder: (_) => const ArcReactorChargingDialog(),
+                                );
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFFFB300).withValues(alpha: 0.14),
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(
+                                    color: const Color(0xFFFFB300).withValues(alpha: 0.55),
+                                    width: 1.2,
+                                  ),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.bolt_rounded,
+                                      size: 13,
+                                      color: Color(0xFFFFB300),
+                                    ),
+                                    SizedBox(width: 4),
+                                    Text(
+                                      'TELEMETRIE',
+                                      style: TextStyle(
+                                        color: Color(0xFFFFB300),
+                                        fontSize: 9.5,
+                                        fontWeight: FontWeight.w700,
+                                        letterSpacing: 1.2,
+                                        fontFamily: 'monospace',
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
                             const SizedBox(width: 8),
 
@@ -851,32 +906,23 @@ class _JarvisHudWidgetState extends State<JarvisHudWidget>
                   ),
                 ),
 
-                // C. Rotating 3D Consciousness Matrix Sphere (Color Cross-fade)
-                Transform.rotate(
-                  angle: _ringsController.value * 2 * math.pi * 0.25,
-                  child: Stack(
-                    children: [
-                      // Cyan Layer (Active when Listening / Idle)
-                      Opacity(
-                        opacity: (1.0 - goldFactor).clamp(0.0, 1.0),
-                        child: Image.asset(
-                          'assets/images/jarvis_core_cyan.png',
-                          width: sphereDiameter,
-                          height: sphereDiameter,
-                          fit: BoxFit.contain,
-                        ),
-                      ),
-                      // Gold Layer (Active when Speaking, directly matching jarvi.jpg)
-                      Opacity(
-                        opacity: goldFactor.clamp(0.0, 1.0),
-                        child: Image.asset(
-                          'assets/images/jarvis_core_gold.png',
-                          width: sphereDiameter,
-                          height: sphereDiameter,
-                          fit: BoxFit.contain,
-                        ),
-                      ),
-                    ],
+                // C. Photorealistic 3D Multi-Depth Stark Mark LXXXV Arc Reactor Core
+                Positioned.fill(
+                  child: CustomPaint(
+                    painter: Stark3DArcReactorPainter(
+                      spin: _ringsController.value,
+                      pulse: _pulseController.value,
+                      wave: _waveController.value,
+                      tiltX: tiltX * 2.2 + (_dragOffset.dy * 0.0018).clamp(-0.35, 0.35),
+                      tiltY: tiltY * 2.2 + (_dragOffset.dx * 0.0018).clamp(-0.35, 0.35),
+                      batteryPct: ChargingTelemetryService.instance.batteryLevel >= 0
+                          ? ChargingTelemetryService.instance.batteryLevel
+                          : 92,
+                      wattage: ChargingTelemetryService.instance.wattage > 0
+                          ? ChargingTelemetryService.instance.wattage
+                          : 24.0,
+                      isCharging: isSpeaking || ChargingTelemetryService.instance.isCharging,
+                    ),
                   ),
                 ),
 

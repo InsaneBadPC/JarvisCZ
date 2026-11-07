@@ -343,6 +343,8 @@ class _JarvisSettingsScreenState extends State<JarvisSettingsScreen> {
   // ---------------------------------------------------------------------------
   Widget _voiceCard(ThemeData theme) {
     final neuralVoiceOptions = [
+      ('cs-CZ-AntoninNeural', 'Antonín (Český neurální – autentický Jarvis CZ)', 'Kultivovaný český studiový mužský hlas'),
+      ('cs-CZ-VlastaNeural', 'Vlasta (Český neurální – F.R.I.D.A.Y. CZ)', 'Přirozený český ženský neurální hlas'),
       ('en-GB-RyanNeural', 'Ryan (Britský neurální – autentický Jarvis)', 'Styl Paula Bettanyho, vřelý, výmluvný a lidský'),
       ('en-GB-ThomasNeural', 'Thomas (Britský neurální – konverzační)', 'Přirozená britská kadence a plynulé frázování'),
       ('en-US-GuyNeural', 'Guy (Americký neurální – studiový mužský)', 'Kultivovaný, autoritativní tón amerického hlasatele'),

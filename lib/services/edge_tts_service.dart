@@ -559,8 +559,9 @@ class EdgeTtsService {
           .replaceAll('"', '&quot;')
           .replaceAll("'", '&apos;');
 
+      final langCode = selectedVoice.startsWith('cs-') ? 'cs-CZ' : 'en-US';
       final ssml =
-          "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'><voice name='$selectedVoice'><prosody pitch='+0Hz' rate='+0%' volume='+0%'>$escapedText</prosody></voice></speak>";
+          "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='$langCode'><voice name='$selectedVoice'><prosody pitch='+0Hz' rate='+0%' volume='+0%'>$escapedText</prosody></voice></speak>";
 
       final ssmlMsg = 'X-RequestId:$reqId\r\n'
           'Content-Type:application/ssml+xml\r\n'
