@@ -20,7 +20,7 @@ class StatusChip extends StatelessWidget {
     return switch (status) {
       TaskStatus.success => StatusChip(
           key: key,
-          label: 'Success',
+          label: 'Úspěch',
           color: AppTheme.success,
           icon: Icons.check_circle_outline,
         ),
@@ -32,7 +32,7 @@ class StatusChip extends StatelessWidget {
         ),
       TaskStatus.cancelled => StatusChip(
           key: key,
-          label: 'Cancelled',
+          label: 'Zrušeno',
           color: AppTheme.warning,
           icon: Icons.stop_circle_outlined,
         ),

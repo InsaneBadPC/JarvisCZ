@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">JARVIS CZ</string>
+    <string name="app_name">JARVIS</string>
     <string name="accessibility_service_label">JARVIS Ovládání obrazovky</string>
-    <string name="accessibility_service_description">JARVIS používá tuto službu ke čtení aktuálního rozvržení obrazovky a provádění klepnutí, gest, posouvání a psaní vaším jménem, když jej požádáte o automatizaci úkolu. Žádný obsah obrazovky neopouští vaše zařízení s výjimkou odeslání vámi nakonfigurovanému poskytovateli AI. Tuto službu můžete kdykoli vypnout a zastavit veškerou automatizaci.</string>
+    <string name="accessibility_service_description">JARVIS využívá tuto službu ke čtení rozložení obrazovky a provádění klepnutí, gest, posouvání a psaní vaším jménem při automatizaci úkolů. Žádný obsah obrazovky neopouští vaše zařízení kromě odeslání vámi nastavenému poskytovateli AI. Tuto službu můžete kdykoli vypnout a zastavit tak veškerou automatizaci.</string>
 </resources>

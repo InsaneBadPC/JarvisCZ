@@ -54,17 +54,17 @@ class RecoveryEngine {
       TaskStep(
         action: TaskStep.actionScroll,
         params: {'direction': 'down'},
-        reasoning: 'Recovery: screen appears stuck; scrolling for new content.',
+        reasoning: 'Obnova: obrazovka se zdá být zaseknutá; posouvám dolů pro načtení obsahu.',
       ),
       TaskStep(
         action: TaskStep.actionWait,
         params: {'ms': 2000},
-        reasoning: 'Recovery: waiting for the UI to settle.',
+        reasoning: 'Obnova: čekám na ustálení uživatelského rozhraní.',
       ),
       TaskStep(
         action: TaskStep.actionPressBack,
         params: {},
-        reasoning: 'Recovery: backing out of a possible dead end.',
+        reasoning: 'Obnova: návrat zpět z možné slepé uličky.',
       ),
     ];
     final step = strategies[_recoveryCursor % strategies.length];

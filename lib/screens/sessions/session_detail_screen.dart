@@ -71,7 +71,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       return Scaffold(
         appBar: AppBar(title: const Text('Relace')),
         body: Center(
-          child: Text('Tato relace byla smazana.',
+          child: Text('Tato relace byla smazána.',
               style: theme.textTheme.bodyMedium),
         ),
       );
@@ -96,7 +96,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       ),
       body: messages.isEmpty
           ? Center(
-              child: Text('(žádný přepis nebyl zaznamenán)',
+              child: Text('(nebyl zaznamenán žádný přepis)',
                   style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant)),
             )

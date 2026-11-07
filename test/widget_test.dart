@@ -6,7 +6,10 @@ import 'package:private_agent/app.dart';
 import 'package:private_agent/models/skill.dart';
 import 'package:private_agent/models/task_step.dart';
 import 'package:private_agent/screens/settings/settings_screen.dart';
+import 'package:private_agent/services/jarvis_tools_service.dart';
 import 'package:private_agent/services/settings_service.dart';
+import 'package:private_agent/services/voice_service.dart';
+import 'package:private_agent/services/workflow_service.dart';
 
 void main() {
   group('TaskStep parsing', () {
@@ -78,18 +81,29 @@ void main() {
       expect(settings.themeMode, ThemeMode.dark);
     });
 
-    test('persists the interaction mode, defaulting to genie', () async {
+    test('persists the interaction mode, defaulting to agent', () async {
       SharedPreferences.setMockInitialValues({});
       final settings = SettingsService.instance;
       await settings.init();
 
-      expect(settings.appMode, AppMode.genie);
+      expect(settings.appMode, AppMode.agent);
 
       await settings.setAppMode(AppMode.chat);
       expect(settings.appMode, AppMode.chat);
 
-      await settings.setAppMode(AppMode.genie);
-      expect(settings.appMode, AppMode.genie);
+      await settings.setAppMode(AppMode.jarvis);
+      expect(settings.appMode, AppMode.jarvis);
+
+      await settings.setAppMode(AppMode.agent);
+      expect(settings.appMode, AppMode.agent);
+    });
+
+    test('backward compatibility migrates saved genie to agent', () async {
+      SharedPreferences.setMockInitialValues({'ui_app_mode': 'genie'});
+      final settings = SettingsService.instance;
+      await settings.init();
+
+      expect(settings.appMode, AppMode.agent);
     });
   });
 
@@ -100,7 +114,7 @@ void main() {
     await tester.pumpWidget(const PrivateAgentApp());
     await tester.pumpAndSettle();
 
-    expect(find.text('Meet PrivateAgent'), findsOneWidget);
+    expect(find.text('Meet J.A.R.V.I.S.'), findsOneWidget);
     expect(find.text('Continue'), findsOneWidget);
   });
 
@@ -139,5 +153,66 @@ void main() {
     await tester.tap(find.text('Save changes'));
     await tester.pumpAndSettle();
     expect(settings.model, 'qwen2.5:7b');
+  });
+
+  group('JARVIS & Hermes Workflow tests', () {
+    test('WorkflowService matches study, sleep, and cinema protocols', () async {
+      SharedPreferences.setMockInitialValues({});
+      final workflows = WorkflowService.instance;
+      await workflows.init();
+
+      final studyMatch = workflows.findMatch('Jarvis I have to study for exams');
+      expect(studyMatch, isNotNull);
+      expect(studyMatch!.id, 'study');
+      expect(studyMatch.brightness, 0.45);
+      expect(studyMatch.volume, 0.0);
+
+      final nightMatch = workflows.findMatch('going to sleep now goodnight');
+      expect(nightMatch, isNotNull);
+      expect(nightMatch!.id, 'night');
+      expect(nightMatch.brightness, 0.05);
+
+      final cinemaMatch = workflows.findMatch('let us watch a movie in cinema mode');
+      expect(cinemaMatch, isNotNull);
+      expect(cinemaMatch!.id, 'cinema');
+      expect(cinemaMatch.volume, 0.70);
+    });
+
+    test('SettingsService persists JARVIS configuration', () async {
+      SharedPreferences.setMockInitialValues({});
+      final settings = SettingsService.instance;
+      await settings.init();
+
+      expect(settings.jarvisAlwaysOn, isTrue);
+      expect(settings.jarvisVoice, 'paul');
+      expect(settings.jarvisNeuralVoice, 'en-GB-RyanNeural');
+      expect(settings.useNeuralVoice, isTrue);
+      expect(settings.jarvisWorkflowsEnabled, isTrue);
+
+      await settings.setJarvisAlwaysOn(false);
+      await settings.setJarvisVoice('friday');
+      await settings.setJarvisNeuralVoice('en-US-GuyNeural');
+      await settings.setUseNeuralVoice(false);
+      await settings.setJarvisWorkflowsEnabled(false);
+
+      expect(settings.jarvisAlwaysOn, isFalse);
+      expect(settings.jarvisVoice, 'friday');
+      expect(settings.jarvisNeuralVoice, 'en-US-GuyNeural');
+      expect(settings.useNeuralVoice, isFalse);
+      expect(settings.jarvisWorkflowsEnabled, isFalse);
+    });
+
+    test('JarvisToolsService formats temporal diagnostics', () {
+      final dt = JarvisToolsService.instance.getCurrentDateTime();
+      expect(dt, isNotEmpty);
+      expect(dt.contains(DateTime.now().year.toString()), isTrue);
+    });
+
+    test('VoiceService sanitizes J.A.R.V.I.S. into natural spoken Jarvis', () {
+      final voice = VoiceService.instance;
+      expect(voice.sanitizeForSpeech('I am J.A.R.V.I.S., sir.'), 'I am Jarvis, sir.');
+      expect(voice.sanitizeForSpeech('Hello J.A.R.V.I.S'), 'Hello Jarvis');
+      expect(voice.sanitizeForSpeech('Welcome to JARVIS mode'), 'Welcome to Jarvis mode');
+    });
   });
 }

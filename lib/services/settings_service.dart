@@ -3,11 +3,20 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 /// Interaction mode of the home screen.
 ///
-/// - [genie]: agent mode — tasks are executed on the device via the
+/// - [agent]: agent mode — tasks are executed on the device via the
 ///   observe → think → act loop (accessibility service required).
 /// - [chat]: plain chatbot mode — messages get a conversational LLM reply,
 ///   no screen reading and no device actions.
-enum AppMode { genie, chat }
+/// - [jarvis]: JARVIS mode — hands-free voice-first autonomous agent & assistant
+///   with live holographic Iron Man HUD animation, intelligent action/chat routing,
+///   and full device control.
+enum AppMode { agent, chat, jarvis }
+
+/// Visual HUD display style for JARVIS mode.
+///
+/// - [arcReactor]: Arc Reactor (3D spherical consciousness core with gyroscopic armillary rings).
+/// - [jarvis]: Jarvis (3D Iron Man hologram suit avatar with reactive telemetry).
+enum JarvisScreenStyle { arcReactor, jarvis }
 
 /// Central, observable store for all user-configurable settings.
 ///
@@ -23,6 +32,10 @@ class SettingsService extends ChangeNotifier {
 
   Future<void> init() async {
     _prefs ??= await SharedPreferences.getInstance();
+    // Ensure system prompt is enabled so models always receive the agent action grammar
+    if (_prefs?.getBool('ai_use_system_prompt') != true) {
+      await _prefs?.setBool('ai_use_system_prompt', true);
+    }
   }
 
   // ------------------------------------------------------------------
@@ -58,11 +71,11 @@ class SettingsService extends ChangeNotifier {
       model: 'meta/llama-3.3-70b-instruct',
     ),
     'ollama': (
-      label: 'Ollama (local)',
+      label: 'Ollama (lokální)',
       baseUrl: 'http://127.0.0.1:11434/v1',
       model: 'llama3.2',
     ),
-    'custom': (label: 'Custom (OpenAI-compatible)', baseUrl: '', model: ''),
+    'custom': (label: 'Vlastní (OpenAI-kompatibilní)', baseUrl: '', model: ''),
   };
 
   String get provider => _prefs?.getString('ai_provider') ?? 'deepseek';
@@ -186,13 +199,14 @@ class SettingsService extends ChangeNotifier {
   // ------------------------------------------------------------------
 
   /// Whether the home screen sends messages to the agent loop
-  /// ([AppMode.genie]) or treats them as plain conversation
-  /// ([AppMode.chat]).
+  /// ([AppMode.agent]), treats them as plain conversation
+  /// ([AppMode.chat]), or enters voice-first hands-free ([AppMode.jarvis]).
   AppMode get appMode {
-    final raw = _prefs?.getString('ui_app_mode') ?? 'genie';
+    final raw = _prefs?.getString('ui_app_mode') ?? 'agent';
+    if (raw == 'genie') return AppMode.agent;
     return AppMode.values.firstWhere(
       (m) => m.name == raw,
-      orElse: () => AppMode.genie,
+      orElse: () => AppMode.agent,
     );
   }
 
@@ -203,6 +217,82 @@ class SettingsService extends ChangeNotifier {
 
   // Appearance, voice & onboarding
   // ------------------------------------------------------------------
+
+  /// Visual HUD display style for JARVIS mode.
+  /// Options: [JarvisScreenStyle.arcReactor] ("Arc Reactor"), [JarvisScreenStyle.jarvis] ("Jarvis").
+  JarvisScreenStyle get jarvisScreenStyle {
+    final raw = _prefs?.getString('jarvis_screen_style') ?? 'arcReactor';
+    return JarvisScreenStyle.values.firstWhere(
+      (s) => s.name == raw,
+      orElse: () => JarvisScreenStyle.arcReactor,
+    );
+  }
+
+  Future<void> setJarvisScreenStyle(JarvisScreenStyle value) async {
+    await _prefs?.setString('jarvis_screen_style', value.name);
+    notifyListeners();
+  }
+
+  /// Whether JARVIS listens continuously like Google Home without tapping.
+  bool get jarvisAlwaysOn => _prefs?.getBool('jarvis_always_on') ?? true;
+  Future<void> setJarvisAlwaysOn(bool value) async {
+    await _prefs?.setBool('jarvis_always_on', value);
+    notifyListeners();
+  }
+
+  /// Voice profile: 'paul' (British Jarvis), 'friday' (Irish), 'stark' (US), 'kip' (Deep), 'cortana' (Smooth).
+  String get jarvisVoice => _prefs?.getString('jarvis_voice') ?? 'paul';
+  Future<void> setJarvisVoice(String value) async {
+    await _prefs?.setString('jarvis_voice', value);
+    notifyListeners();
+  }
+
+  /// Studio Neural Voice (Edge-TTS) for ultra-realistic human speech.
+  /// Defaults to en-GB-RyanNeural (Paul Bettany British JARVIS style).
+  String get jarvisNeuralVoice =>
+      _prefs?.getString('jarvis_neural_voice') ?? 'en-GB-RyanNeural';
+  Future<void> setJarvisNeuralVoice(String value) async {
+    await _prefs?.setString('jarvis_neural_voice', value);
+    notifyListeners();
+  }
+
+  /// Whether to prioritize ultra-realistic neural human voices over offline TTS.
+  bool get useNeuralVoice =>
+      _prefs?.getBool('jarvis_use_neural_voice') ?? true;
+  Future<void> setUseNeuralVoice(bool value) async {
+    await _prefs?.setBool('jarvis_use_neural_voice', value);
+    notifyListeners();
+  }
+
+  /// Self-evolving skills & workflows like Hermes Agent.
+  bool get jarvisWorkflowsEnabled =>
+      _prefs?.getBool('jarvis_workflows_enabled') ?? true;
+  Future<void> setJarvisWorkflowsEnabled(bool value) async {
+    await _prefs?.setBool('jarvis_workflows_enabled', value);
+    notifyListeners();
+  }
+
+  /// Local-First Privacy Mode: forces on-device processing via local Ollama
+  /// (127.0.0.1:11434) and offline voice synthesis, zero cloud data leakage.
+  bool get localFirstPrivacyMode =>
+      _prefs?.getBool('local_first_privacy_mode') ?? false;
+  Future<void> setLocalFirstPrivacyMode(bool value) async {
+    await _prefs?.setBool('local_first_privacy_mode', value);
+    if (value) {
+      await setProvider('ollama');
+      await setUseNeuralVoice(false);
+    }
+    notifyListeners();
+  }
+
+  /// Permission system: prompts for explicit confirmation before high-risk operations
+  /// (e.g. sending messages, placing calls, deleting data, purchases).
+  bool get confirmRiskyActions =>
+      _prefs?.getBool('confirm_risky_actions') ?? true;
+  Future<void> setConfirmRiskyActions(bool value) async {
+    await _prefs?.setBool('confirm_risky_actions', value);
+    notifyListeners();
+  }
 
   ThemeMode get themeMode {
     final raw = _prefs?.getString('ui_theme_mode') ?? 'system';
@@ -228,6 +318,159 @@ class SettingsService extends ChangeNotifier {
   bool get voiceFeedback => _prefs?.getBool('voice_feedback') ?? false;
   Future<void> setVoiceFeedback(bool value) async {
     await _prefs?.setBool('voice_feedback', value);
+    notifyListeners();
+  }
+
+  // ------------------------------------------------------------------
+  // Advanced Features: Smart Home, Commute, Jarvis Eye, Macro Recorder
+  // ------------------------------------------------------------------
+
+  /// Smart Home / Home Assistant URL (e.g. http://192.168.1.100:8123)
+  String get homeAssistantUrl =>
+      _prefs?.getString('smart_home_ha_url') ?? 'http://homeassistant.local:8123';
+  Future<void> setHomeAssistantUrl(String value) async {
+    await _prefs?.setString('smart_home_ha_url', value.trim());
+    notifyListeners();
+  }
+
+  /// Home Assistant Long-Lived Access Token
+  String get homeAssistantToken =>
+      _prefs?.getString('smart_home_ha_token') ?? '';
+  Future<void> setHomeAssistantToken(String value) async {
+    await _prefs?.setString('smart_home_ha_token', value.trim());
+    notifyListeners();
+  }
+
+  /// Whether Smart Home integration is enabled
+  bool get smartHomeEnabled =>
+      _prefs?.getBool('smart_home_enabled') ?? true;
+  Future<void> setSmartHomeEnabled(bool value) async {
+    await _prefs?.setBool('smart_home_enabled', value);
+    notifyListeners();
+  }
+
+  /// Default Smart Home entity ID (e.g. light.living_room)
+  String get smartHomeDefaultEntity =>
+      _prefs?.getString('smart_home_default_entity') ?? 'light.living_room';
+  Future<void> setSmartHomeDefaultEntity(String value) async {
+    await _prefs?.setString('smart_home_default_entity', value.trim());
+    notifyListeners();
+  }
+
+  /// Commute: Home address / origin
+  String get commuteHomeAddress =>
+      _prefs?.getString('commute_home_address') ?? 'Downtown';
+  Future<void> setCommuteHomeAddress(String value) async {
+    await _prefs?.setString('commute_home_address', value.trim());
+    notifyListeners();
+  }
+
+  /// Commute: Work / standard destination address
+  String get commuteWorkAddress =>
+      _prefs?.getString('commute_work_address') ?? 'Tech Park';
+  Future<void> setCommuteWorkAddress(String value) async {
+    await _prefs?.setString('commute_work_address', value.trim());
+    notifyListeners();
+  }
+
+  /// Commute travel mode: 'driving', 'transit', 'walking', 'cycling'
+  String get commuteMode =>
+      _prefs?.getString('commute_mode') ?? 'driving';
+  Future<void> setCommuteMode(String value) async {
+    await _prefs?.setString('commute_mode', value);
+    notifyListeners();
+  }
+
+  /// Proactive Commute & Traffic warnings before meetings
+  bool get proactiveCommuteEnabled =>
+      _prefs?.getBool('proactive_commute_enabled') ?? true;
+  Future<void> setProactiveCommuteEnabled(bool value) async {
+    await _prefs?.setBool('proactive_commute_enabled', value);
+    notifyListeners();
+  }
+
+  /// Jarvis Eye Multimodal Camera Perception
+  bool get jarvisEyeEnabled =>
+      _prefs?.getBool('jarvis_eye_enabled') ?? true;
+  Future<void> setJarvisEyeEnabled(bool value) async {
+    await _prefs?.setBool('jarvis_eye_enabled', value);
+    notifyListeners();
+  }
+
+  /// Autonomous Macro Recorder
+  bool get macroRecorderEnabled =>
+      _prefs?.getBool('macro_recorder_enabled') ?? true;
+  Future<void> setMacroRecorderEnabled(bool value) async {
+    await _prefs?.setBool('macro_recorder_enabled', value);
+    notifyListeners();
+  }
+
+  // ------------------------------------------------------------------
+  // Autonomous Proactive Vocalization & Scheduled Nudges
+  // ------------------------------------------------------------------
+
+  /// Master switch: whether JARVIS can speak up proactively on its own
+  bool get jarvisAutoSpeakEnabled =>
+      _prefs?.getBool('jarvis_auto_speak_enabled') ?? true;
+  Future<void> setJarvisAutoSpeakEnabled(bool value) async {
+    await _prefs?.setBool('jarvis_auto_speak_enabled', value);
+    notifyListeners();
+  }
+
+  /// Whether JARVIS automatically opens a hands-free confirmation window
+  /// ("Yes" or "No") after asking a proactive question
+  bool get proactiveVoiceConfirmationEnabled =>
+      _prefs?.getBool('proactive_voice_confirmation_enabled') ?? true;
+  Future<void> setProactiveVoiceConfirmationEnabled(bool value) async {
+    await _prefs?.setBool('proactive_voice_confirmation_enabled', value);
+    notifyListeners();
+  }
+
+  /// Proactive Bedtime / Night Mode prompt (around 9:30 PM - 11 PM)
+  bool get proactiveNightModePrompt =>
+      _prefs?.getBool('proactive_night_mode_prompt') ?? true;
+  Future<void> setProactiveNightModePrompt(bool value) async {
+    await _prefs?.setBool('proactive_night_mode_prompt', value);
+    notifyListeners();
+  }
+
+  /// Proactive Morning Briefing prompt (around 7:30 AM - 9 AM)
+  bool get proactiveMorningBriefingPrompt =>
+      _prefs?.getBool('proactive_morning_briefing_prompt') ?? true;
+  Future<void> setProactiveMorningBriefingPrompt(bool value) async {
+    await _prefs?.setBool('proactive_morning_briefing_prompt', value);
+    notifyListeners();
+  }
+
+  /// Proactive Study & Focus Protocol prompt (afternoon study session)
+  bool get proactiveStudyPrompt =>
+      _prefs?.getBool('proactive_study_prompt') ?? true;
+  Future<void> setProactiveStudyPrompt(bool value) async {
+    await _prefs?.setBool('proactive_study_prompt', value);
+    notifyListeners();
+  }
+
+  /// Proactive Remaining Tasks Review (late afternoon agenda check)
+  bool get proactiveTaskReminderPrompt =>
+      _prefs?.getBool('proactive_task_reminder_prompt') ?? true;
+  Future<void> setProactiveTaskReminderPrompt(bool value) async {
+    await _prefs?.setBool('proactive_task_reminder_prompt', value);
+    notifyListeners();
+  }
+
+  /// Proactive Upcoming Meeting Reminders (15-30m before calendar events)
+  bool get proactiveMeetingReminders =>
+      _prefs?.getBool('proactive_meeting_reminders') ?? true;
+  Future<void> setProactiveMeetingReminders(bool value) async {
+    await _prefs?.setBool('proactive_meeting_reminders', value);
+    notifyListeners();
+  }
+
+  /// Proactive Low Battery Warning (< 20%)
+  bool get proactiveBatteryAlert =>
+      _prefs?.getBool('proactive_battery_alert') ?? true;
+  Future<void> setProactiveBatteryAlert(bool value) async {
+    await _prefs?.setBool('proactive_battery_alert', value);
     notifyListeners();
   }
 }

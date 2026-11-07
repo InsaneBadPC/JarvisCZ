@@ -153,7 +153,7 @@ class TaskExecutor extends ChangeNotifier {
   void pause() {
     if (state == ExecutorState.running) {
       state = ExecutorState.paused;
-      _log(ChatMessage.system('Pozastaveno.'));
+      _log(ChatMessage.system('Úkol pozastaven.'));
       notifyListeners();
       _broadcastOverlay();
     }
@@ -162,7 +162,7 @@ class TaskExecutor extends ChangeNotifier {
   void resume() {
     if (state == ExecutorState.paused) {
       state = ExecutorState.running;
-      _log(ChatMessage.system('Pokracuji...'));
+      _log(ChatMessage.system('Úkol obnoven.'));
       notifyListeners();
       _broadcastOverlay();
     }
@@ -172,7 +172,7 @@ class TaskExecutor extends ChangeNotifier {
     if (!isBusy) return;
     _cancelRequested = true;
     if (isPaused) state = ExecutorState.running; // unblock the wait loop
-    _log(ChatMessage.system('Cancellation requested…'));
+    _log(ChatMessage.system('Požadováno zrušení úkolu…'));
     notifyListeners();
   }
 
@@ -212,21 +212,51 @@ class TaskExecutor extends ChangeNotifier {
     _log(ChatMessage.user(message));
     notifyListeners();
 
+    final agentMsg = ChatMessage.agent('');
+    _log(agentMsg);
+    notifyListeners();
+
+    final fullResponseBuffer = StringBuffer();
+
     try {
-      final reply = await _ai.chat(
+      final stream = _ai.chatStream(
         message: message,
         history: List.of(_chatHistory),
       );
-      _chatHistory.add({'role': 'user', 'content': message});
-      _chatHistory.add({'role': 'assistant', 'content': reply});
+
+      await for (final token in stream) {
+        fullResponseBuffer.write(token);
+        agentMsg.text = fullResponseBuffer.toString();
+        notifyListeners();
+      }
+
+      final reply = fullResponseBuffer.toString().trim();
+      if (reply.isEmpty) {
+        // Fallback if model yielded nothing
+        final directReply = await _ai.chat(
+          message: message,
+          history: List.of(_chatHistory),
+        );
+        agentMsg.text = directReply;
+        _chatHistory.add({'role': 'user', 'content': message});
+        _chatHistory.add({'role': 'assistant', 'content': directReply});
+      } else {
+        _chatHistory.add({'role': 'user', 'content': message});
+        _chatHistory.add({'role': 'assistant', 'content': reply});
+      }
       while (_chatHistory.length > _maxChatTurns * 2) {
         _chatHistory.removeRange(0, 2);
       }
-      _log(ChatMessage.agent(reply));
     } on AiException catch (e) {
-      _log(ChatMessage.error('AI request failed: $e'));
+      if (fullResponseBuffer.isEmpty) {
+        logs.remove(agentMsg);
+        _log(ChatMessage.error('Požadavek AI selhal: $e'));
+      }
     } catch (e) {
-      _log(ChatMessage.error('Chat error: $e'));
+      if (fullResponseBuffer.isEmpty) {
+        logs.remove(agentMsg);
+        _log(ChatMessage.error('Chyba chatu: $e'));
+      }
     } finally {
       _chatBusy = false;
       notifyListeners();
@@ -267,8 +297,8 @@ class TaskExecutor extends ChangeNotifier {
       if (!await _automation.isServiceEnabled()) {
         _log(
           ChatMessage.error(
-            'Accessibility service is OFF. Enable "PrivateAgent Screen '
-            'Control" in system settings, then retry.',
+            'Služba usnadnění přístupu je VYPNUTÁ. Povolte ovládání obrazovky '
+            'v systémovém nastavení a zkuste to znovu.',
           ),
         );
         return status;
@@ -281,20 +311,20 @@ class TaskExecutor extends ChangeNotifier {
           _usedSkillReplay = true;
           _log(
             ChatMessage.system(
-              'Found memorized skill for this goal (${skill.steps.length} '
-              'steps, used ${skill.successCount}x). Replaying…',
+              'Nalezena uložená dovednost pro tento cíl (${skill.steps.length} '
+              'kroků, použito ${skill.successCount}×). Přehrávám…',
             ),
           );
           final ok = await _replaySkill(skill);
           if (ok) {
             status = TaskStatus.success;
-            _log(ChatMessage.system('Skill replay completed successfully.'));
+            _log(ChatMessage.system('Přehrání dovednosti bylo úspěšně dokončeno.'));
             await _skills.markReplayOutcome(skill.id, success: true);
             return status;
           }
           _log(
             ChatMessage.system(
-              'Skill replay failed — falling back to AI planning.',
+              'Přehrání dovednosti selhalo — přepínám na plánování pomocí AI.',
             ),
           );
           await _skills.markReplayOutcome(skill.id, success: false);
@@ -306,7 +336,7 @@ class TaskExecutor extends ChangeNotifier {
       status = await _aiLoop(goal, settings);
       return status;
     } catch (e) {
-      _log(ChatMessage.error('Execution error: $e'));
+      _log(ChatMessage.error('Chyba provádění: $e'));
       status = TaskStatus.failed;
       return status;
     } finally {
@@ -320,7 +350,7 @@ class TaskExecutor extends ChangeNotifier {
 
     while (step < settings.maxSteps) {
       if (_cancelRequested) {
-        _log(ChatMessage.system('Ukol zrusen uzivatelem.'));
+        _log(ChatMessage.system('Úkol byl zrušen uživatelem.'));
         return TaskStatus.cancelled;
       }
       while (state == ExecutorState.paused) {
@@ -336,12 +366,12 @@ class TaskExecutor extends ChangeNotifier {
       try {
         nodes = await _automation.dumpScreen();
       } catch (e) {
-        _log(ChatMessage.error('Failed to read screen: $e'));
+        _log(ChatMessage.error('Nepodařilo se načíst obrazovku: $e'));
         await Future.delayed(Duration(milliseconds: settings.stepDelayMs));
         continue;
       }
       if (nodes.isEmpty) {
-        _log(ChatMessage.system('Screen appears empty (locked?). Waiting…'));
+        _log(ChatMessage.system('Obrazovka se zdá být prázdná (zamčená?). Čekám…'));
         await Future.delayed(const Duration(milliseconds: 1500));
         continue;
       }
@@ -362,28 +392,30 @@ class TaskExecutor extends ChangeNotifier {
           history: history,
         );
       } on AiException catch (e) {
-        _log(ChatMessage.error('AI request failed: $e'));
+        _log(ChatMessage.error('Požadavek AI selhal: $e'));
         return TaskStatus.failed;
       }
+
+      debugPrint('[TaskExecutor] Model raw output step $step: "$raw"');
 
       final decision = TaskStep.tryParse(raw);
       if (decision == null) {
         parseFailures++;
+        final preview = raw.trim().length > 80 ? '${raw.trim().substring(0, 80)}…' : raw.trim();
         _log(
           ChatMessage.error(
-            'Could not parse AI output as an action JSON '
-            '(attempt $parseFailures).',
+            'Nepodařilo se zpracovat výstup AI jako JSON akci (pokus $parseFailures): "$preview"',
           ),
         );
         if (parseFailures >= 3) {
-          _log(ChatMessage.error('Giving up: AI kept replying non-JSON.'));
+          _log(ChatMessage.error('Ukončuji: AI opakovaně odpovídá mimo formát JSON.'));
           return TaskStatus.failed;
         }
         _pushTurn(
           history,
           raw,
-          'Your last reply was not valid JSON. Reply with ONLY the JSON '
-          'action object.',
+          'Your last reply was not valid JSON. Reply with ONLY the single JSON action object: '
+          '{"action": "<action>", "params": {...}, "reasoning": "<explanation>", "is_complete": false}',
         );
         continue;
       }
@@ -401,7 +433,7 @@ class TaskExecutor extends ChangeNotifier {
       );
 
       if (decision.action == TaskStep.actionDone || decision.isComplete) {
-        _log(ChatMessage.system('Goal marked complete by the agent.'));
+        _log(ChatMessage.system('Cíl byl agentem označen jako splněný.'));
         await _learnSkillIfWorthIt(goal, settings);
         return TaskStatus.success;
       }
@@ -420,7 +452,7 @@ class TaskExecutor extends ChangeNotifier {
       // --- Recovery safeguard ---
       if (_recovery.shouldRecover) {
         final recovery = _recovery.suggestRecovery();
-        _log(ChatMessage.system('Recovery: ${recovery.reasoning}'));
+        _log(ChatMessage.system('Obnova: ${recovery.reasoning}'));
         await _performAction(recovery, nodes);
       }
 
@@ -430,8 +462,8 @@ class TaskExecutor extends ChangeNotifier {
 
     _log(
       ChatMessage.error(
-        'Reached the maximum of ${settings.maxSteps} steps without '
-        'completing the goal.',
+        'Bylo dosaženo maxima ${settings.maxSteps} kroků bez '
+        'splnění cíle.',
       ),
     );
     return TaskStatus.failed;
@@ -481,10 +513,10 @@ class TaskExecutor extends ChangeNotifier {
               step.stringParam('app') ?? step.stringParam('package') ?? '';
           final launched = await _apps.launch(query);
           if (launched == null) {
-            _log(ChatMessage.error('App not found: "$query"'));
+            _log(ChatMessage.error('Aplikace nebyla nalezena: "$query"'));
             return false;
           }
-          _log(ChatMessage.system('Launched $launched.'));
+          _log(ChatMessage.system('Spuštěna aplikace $launched.'));
           return true;
         case TaskStep.actionWait:
           final ms = (step.intParam('ms') ?? 1500).clamp(100, 10000);
@@ -494,7 +526,7 @@ class TaskExecutor extends ChangeNotifier {
           return false;
       }
     } catch (e) {
-      _log(ChatMessage.error('Action ${step.action} threw: $e'));
+      _log(ChatMessage.error('Akce ${step.action} vyvolala chybu: $e'));
       return false;
     }
   }
@@ -536,13 +568,13 @@ class TaskExecutor extends ChangeNotifier {
       );
       _log(
         ChatMessage.agent(
-          '**${s.action}** ${_briefParams(s)}\n\n(replaying memorized step)',
+          '**${s.action}** ${_briefParams(s)}\n\n(přehrávání uloženého kroku)',
           step: step,
         ),
       );
       final ok = await _performAction(s, nodes);
       if (!ok && s.action != TaskStep.actionWait) {
-        _log(ChatMessage.error('Replayed step failed: ${s.action}'));
+        _log(ChatMessage.error('Přehrávaný krok selhal: ${s.action}'));
         return false;
       }
       notifyListeners();
@@ -562,7 +594,7 @@ class TaskExecutor extends ChangeNotifier {
     await _skills.saveOrUpdate(goal, List.of(_executedSteps));
     _log(
       ChatMessage.system(
-        'Memorized ${_executedSteps.length} steps for this goal.',
+        'Uloženo ${_executedSteps.length} kroků pro tento cíl.',
       ),
     );
   }
@@ -591,17 +623,22 @@ class TaskExecutor extends ChangeNotifier {
     await _persistHistory();
 
     final summary = switch (status) {
-      TaskStatus.success => 'Ukol dokoncen za $step step(s).',
-      TaskStatus.cancelled => 'Ukol byl zrusen po $step step(s).',
-      TaskStatus.failed => 'Task failed after $step step(s).',
+      TaskStatus.success => 'Úkol dokončen v $step krocích.',
+      TaskStatus.cancelled => 'Úkol zrušen po $step krocích.',
+      TaskStatus.failed => 'Úkol selhal po $step krocích.',
     };
     _log(ChatMessage.system(summary));
 
     if (SettingsService.instance.voiceFeedback) {
       await VoiceService.instance.speak(summary);
     }
+    final statusCz = switch (status) {
+      TaskStatus.success => 'Úspěch',
+      TaskStatus.cancelled => 'Zrušeno',
+      TaskStatus.failed => 'Selhání',
+    };
     await SystemControlService.instance.notify(
-      'PrivateAgent — ${status.name}',
+      'J.A.R.V.I.S. — $statusCz',
       '$goal\n$summary',
     );
 

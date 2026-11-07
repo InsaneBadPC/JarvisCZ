@@ -42,8 +42,93 @@ class AgentAccessibilityService : AccessibilityService() {
         instance = this
     }
 
+    // ------------------------------------------------------------------
+    // Autonomous Macro Recording
+    // ------------------------------------------------------------------
+    @Volatile
+    var isRecordingMacro: Boolean = false
+        private set
+
+    private val macroEvents = mutableListOf<Map<String, Any>>()
+
+    fun startMacroRecording() {
+        synchronized(macroEvents) {
+            macroEvents.clear()
+        }
+        isRecordingMacro = true
+    }
+
+    fun stopMacroRecording(): List<Map<String, Any>> {
+        isRecordingMacro = false
+        synchronized(macroEvents) {
+            return ArrayList(macroEvents)
+        }
+    }
+
+    fun getMacroRecordingStatus(): Boolean = isRecordingMacro
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // We poll on demand instead of reacting to events.
+        if (!isRecordingMacro || event == null) return
+        val pkg = event.packageName?.toString() ?: ""
+        if (pkg == packageName) return // Ignore self-interactions inside PrivateAgent
+
+        when (event.eventType) {
+            AccessibilityEvent.TYPE_VIEW_CLICKED -> {
+                val node = event.source
+                val rect = Rect()
+                node?.getBoundsInScreen(rect)
+                val text = event.text?.joinToString(" ")?.trim() ?: ""
+                val desc = event.contentDescription?.toString()?.trim() ?: ""
+                val label = if (text.isNotEmpty()) text else desc
+                val viewId = node?.viewIdResourceName ?: ""
+
+                val map = mutableMapOf<String, Any>(
+                    "type" to "click",
+                    "label" to label,
+                    "x" to rect.centerX(),
+                    "y" to rect.centerY(),
+                    "package" to pkg,
+                    "viewId" to viewId,
+                    "timestamp" to System.currentTimeMillis()
+                )
+                synchronized(macroEvents) {
+                    macroEvents.add(map)
+                }
+            }
+            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> {
+                val text = event.text?.joinToString("") ?: ""
+                if (text.isNotEmpty()) {
+                    val map = mutableMapOf<String, Any>(
+                        "type" to "type",
+                        "text" to text,
+                        "package" to pkg,
+                        "timestamp" to System.currentTimeMillis()
+                    )
+                    synchronized(macroEvents) {
+                        if (macroEvents.isNotEmpty() && macroEvents.last()["type"] == "type") {
+                            macroEvents[macroEvents.size - 1] = map
+                        } else {
+                            macroEvents.add(map)
+                        }
+                    }
+                }
+            }
+            AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
+                val map = mutableMapOf<String, Any>(
+                    "type" to "scroll",
+                    "direction" to "down",
+                    "package" to pkg,
+                    "timestamp" to System.currentTimeMillis()
+                )
+                synchronized(macroEvents) {
+                    val last = macroEvents.lastOrNull()
+                    val lastTime = (last?.get("timestamp") as? Long) ?: 0L
+                    if (last?.get("type") != "scroll" || (System.currentTimeMillis() - lastTime > 600)) {
+                        macroEvents.add(map)
+                    }
+                }
+            }
+        }
     }
 
     override fun onInterrupt() {

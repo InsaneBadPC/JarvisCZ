@@ -6,19 +6,34 @@ import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 
 import 'app.dart';
 import 'overlay/overlay_app.dart';
+import 'services/calendar_reminder_service.dart';
+import 'services/hermes_evolution_service.dart';
+import 'services/jarvis_service.dart';
+import 'services/native_bridge_service.dart';
 import 'services/screen_automation_service.dart';
+import 'services/sentry_service.dart';
 import 'services/settings_service.dart';
 import 'services/task_executor.dart';
 import 'services/telegram_service.dart';
+import 'services/todo_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  NativeBridgeService.instance.init();
 
   final settings = SettingsService.instance;
   await settings.init();
 
   final executor = TaskExecutor.instance;
   await executor.init();
+
+  await HermesEvolutionService.instance.init();
+  await CalendarReminderService.instance.init();
+  await TodoService.instance.init();
+
+  if (settings.jarvisAlwaysOn) {
+    JarvisService.instance.ensureAlwaysOnRunning();
+  }
 
   _wireTelegram(executor, settings);
   _wireOverlayCommands(executor);
@@ -34,19 +49,19 @@ void _wireTelegram(TaskExecutor executor, SettingsService settings) {
     final lower = text.toLowerCase();
     if (lower == '/status') {
       final running = executor.isBusy
-          ? 'Running "${executor.currentGoal}" (step ${executor.step})'
-          : 'Idle';
+          ? 'Běží "${executor.currentGoal}" (krok ${executor.step})'
+          : 'Nečinný';
       final serviceOn =
           await ScreenAutomationService.instance.isServiceEnabled();
       await telegram.sendMessage(chatId,
-          '📱 $running\nAccessibility service: ${serviceOn ? 'ON ✅' : 'OFF ❌'}');
+          '📱 $running\nSlužba přístupnosti: ${serviceOn ? 'ZAPNUTO ✅' : 'VYPNUTO ❌'}');
       return;
     }
     if (lower == '/screenshot') {
       final shot =
           await ScreenAutomationService.instance.takeScreenshotBase64();
       if (shot == null) {
-        await telegram.sendMessage(chatId, '⚠️ Screenshot failed.');
+        await telegram.sendMessage(chatId, '⚠️ Snímek obrazovky se nezdařil.');
       } else {
         await telegram.sendScreenshot(chatId, shot);
       }
@@ -55,18 +70,18 @@ void _wireTelegram(TaskExecutor executor, SettingsService settings) {
     if (lower == '/cancel' || lower == '/stop') {
       if (executor.isBusy) {
         executor.cancel();
-        await telegram.sendMessage(chatId, '⏹️ Cancelling current task…');
+        await telegram.sendMessage(chatId, '⏹️ Rušení aktuálního úkolu…');
       } else {
-        await telegram.sendMessage(chatId, 'Nothing is running.');
+        await telegram.sendMessage(chatId, 'Nic neběží.');
       }
       return;
     }
     if (executor.isBusy) {
       await telegram.sendMessage(
-          chatId, '⏳ Busy with another task. Send /cancel to stop it.');
+          chatId, '⏳ Zaneprázdněn jiným úkolem. Pošlete /cancel pro jeho zastavení.');
       return;
     }
-    await telegram.sendMessage(chatId, '🚀 Starting task: $text');
+    await telegram.sendMessage(chatId, '🚀 Spouštím úkol: $text');
     unawaited(executor.executeTask(text, telegramChatId: chatId));
   };
 
@@ -76,7 +91,7 @@ void _wireTelegram(TaskExecutor executor, SettingsService settings) {
     final shot = await ScreenAutomationService.instance.takeScreenshotBase64();
     if (shot != null) {
       await telegram.sendScreenshot(chatId, shot,
-          caption: 'Konecny stav disp.');
+          caption: 'Konečný stav obrazovky');
     }
   };
 
@@ -113,6 +128,18 @@ void _wireOverlayCommands(TaskExecutor executor) {
         break;
       case 'cancel':
         executor.cancel();
+        break;
+      case 'summarize_screen':
+        unawaited(JarvisService.instance.processCommand('summarize this screen article'));
+        break;
+      case 'jarvis_command':
+        final goal = decoded['goal']?.toString().trim() ?? '';
+        if (goal.isNotEmpty) {
+          unawaited(JarvisService.instance.processCommand(goal));
+        }
+        break;
+      case 'toggle_sentry':
+        unawaited(SentryService.instance.toggleSentry());
         break;
     }
   });

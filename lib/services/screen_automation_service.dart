@@ -87,11 +87,39 @@ class ScreenAutomationService {
       clickAt(node.centerX, node.centerY);
 
   /// Finds a node by label within [nodes] (or the last dump) and taps its
-  /// center. Exact matches win over partial matches.
+  /// center. Exact matches win over partial matches. Also supports matching
+  /// by node index (e.g. "#3", "[3]", "#3 \"Sign in\"") and cleans wrapping quotes.
   Future<bool> clickText(String text, {List<ScreenNode>? nodes}) async {
     final pool = nodes ?? _lastNodes;
-    final q = text.trim().toLowerCase();
+    var q = text.trim();
     if (q.isEmpty || pool.isEmpty) return false;
+
+    // 1. Check if model targeted by node index: e.g. "#3", "[3]", "#3 \"Sign in\"" or "3"
+    final indexMatch =
+        RegExp(r'^(?:#|\[)?(\d+)(?:\])?(?:\s+["\x27]?([^"\x27]+)["\x27]?)?$').firstMatch(q);
+    if (indexMatch != null) {
+      final idx = int.tryParse(indexMatch.group(1)!);
+      if (idx != null) {
+        for (final n in pool) {
+          if (n.index == idx) {
+            return clickNode(n);
+          }
+        }
+      }
+      final subLabel = indexMatch.group(2)?.trim();
+      if (subLabel != null && subLabel.isNotEmpty) {
+        q = subLabel;
+      }
+    }
+
+    // 2. Clean up wrapping quotes, brackets, and prefixes: e.g. [0] (Button) Search -> Search
+    q = q
+        .replaceAll(RegExp(r'^\([a-zA-Z]+\)\s*'), '')
+        .replaceAll(RegExp(r'^\[\d+\]\s*'), '')
+        .replaceAll(RegExp(r'^["\x27\[\(]+|["\x27\]\)]+$'), '')
+        .trim()
+        .toLowerCase();
+    if (q.isEmpty) return false;
 
     ScreenNode? exact;
     ScreenNode? partial;

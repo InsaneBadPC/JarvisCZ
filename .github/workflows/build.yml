@@ -49,9 +49,9 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.0-cz
-          name: "JARVIS CZ v1.0.0"
-          body: "Oficiální český překlad rozhraní Jarvis (PrivateAgent)"
+          tag_name: v1.1.0-cz
+          name: "JARVIS CZ v1.1.0"
+          body: "Kompletní česká lokalizace rozhraní aplikace J.A.R.V.I.S. s plnou diakritikou."
           files: build/app/outputs/flutter-apk/jarvis-release-cz.apk
           draft: false
           prerelease: false

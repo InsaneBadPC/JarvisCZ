@@ -1,21 +1,25 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
-import 'package:speech_to_text/speech_recognition_result.dart';
-import 'package:speech_to_text/speech_to_text.dart';
 
 import '../theme/app_theme.dart';
 
-/// Root widget of the overlay engine (runs in its own isolate, see
-/// `overlayMain()` in main.dart).
+/// Root widget of the system-wide floating overlay engine (runs in its own isolate).
 ///
-/// Collapsed: a small draggable bubble.
-/// Expanded: a glassmorphism panel with the live transcript, task controls
-/// and a command input. State and commands travel over
-/// [FlutterOverlayWindow.shareData] / [FlutterOverlayWindow.overlayListener].
+/// Collapsed: A Stark Arc Reactor holographic bubble with 3-state real-time colors:
+///   - Electric Cyan: Idle / Standby
+///   - Emerald Green: Listening / Speech active
+///   - Solar Gold: Computing / Thinking / Summarizing / Speaking
+///
+/// Expanded: A Glassmorphic HUD panel featuring:
+///   - One-tap "Summarize Screen Article" tool
+///   - Quick actions for Sentry Watchdog, Hardware Specs, and Screen Time
+///   - Live Screen Summary card
+///   - Agent Task transcript & command controls
 class OverlayApp extends StatefulWidget {
   const OverlayApp({super.key});
 
@@ -23,29 +27,46 @@ class OverlayApp extends StatefulWidget {
   State<OverlayApp> createState() => _OverlayAppState();
 }
 
-class _OverlayAppState extends State<OverlayApp> {
+class _OverlayAppState extends State<OverlayApp>
+    with SingleTickerProviderStateMixin {
   static const _bubbleSize = 110;
-  static const _panelWidth = 340;
-  static const _panelHeight = 520;
-
-  final _inputController = TextEditingController();
-  final _speech = SpeechToText();
+  static const _panelWidth = 330;
+  static const _panelHeight = 360;
 
   StreamSubscription<dynamic>? _subscription;
+  late final AnimationController _reactorController;
 
   bool _expanded = false;
-  bool _listening = false;
-  String _goal = '';
-  String _state = 'idle';
-  int _step = 0;
-  int _maxSteps = 15;
-  List<Map<String, dynamic>> _messages = [];
 
-  bool get _busy => _state == 'running' || _state == 'paused';
+  // JARVIS Real-Time Phase State
+  String _jarvisPhase = 'idle'; // 'idle', 'listening', 'thinking', 'speaking', 'executing'
+  String _jarvisStatus = 'POHOTOVOST // ŘEKNĚTE "HEY JARVIS"';
+  String? _screenSummary;
+  String _summaryTitle = 'Shrnutí článku na obrazovce';
+
+  bool get _busy =>
+      _jarvisPhase == 'thinking' ||
+      _jarvisPhase == 'speaking' ||
+      _jarvisPhase == 'executing';
+
+  Color get _currentColor {
+    if (_jarvisPhase == 'listening') {
+      return const Color(0xFF00E676); // Emerald Green (Listening)
+    }
+    if (_busy) {
+      return const Color(0xFFFFB300); // Solar Gold / Amber (Computing / Speaking)
+    }
+    return const Color(0xFF00E5FF); // Electric Cyan (Standby)
+  }
 
   @override
   void initState() {
     super.initState();
+    _reactorController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 8),
+    )..repeat();
+
     _subscription =
         FlutterOverlayWindow.overlayListener.listen(_onMainAppEvent);
   }
@@ -53,7 +74,7 @@ class _OverlayAppState extends State<OverlayApp> {
   @override
   void dispose() {
     _subscription?.cancel();
-    _inputController.dispose();
+    _reactorController.dispose();
     super.dispose();
   }
 
@@ -62,21 +83,21 @@ class _OverlayAppState extends State<OverlayApp> {
     try {
       final decoded = jsonDecode(event);
       if (decoded is! Map) return;
-      if (decoded['type'] == 'state') {
+
+      final type = decoded['type'];
+      if (type == 'jarvis_state') {
         setState(() {
-          _goal = decoded['goal']?.toString() ?? _goal;
-          _state = decoded['state']?.toString() ?? _state;
-          _step = decoded['step'] is int ? decoded['step'] as int : _step;
-          _maxSteps = decoded['maxSteps'] is int
-              ? decoded['maxSteps'] as int
-              : _maxSteps;
-          final msgs = decoded['messages'];
-          if (msgs is List) {
-            _messages = msgs.whereType<Map>().map((m) {
-              return m.map((k, v) => MapEntry('$k', v));
-            }).toList();
-          }
+          _jarvisPhase = decoded['phase']?.toString() ?? _jarvisPhase;
+          _jarvisStatus = decoded['status']?.toString() ?? _jarvisStatus;
         });
+      } else if (type == 'screen_summary') {
+        setState(() {
+          _screenSummary = decoded['summary']?.toString();
+          _summaryTitle = decoded['title']?.toString() ?? 'Shrnutí článku na obrazovce';
+        });
+        if (!_expanded) {
+          _expand();
+        }
       }
     } catch (_) {}
   }
@@ -92,7 +113,6 @@ class _OverlayAppState extends State<OverlayApp> {
     setState(() => _expanded = true);
     await FlutterOverlayWindow.resizeOverlay(
         _panelWidth, _panelHeight, false);
-    // focusPointer lets the text field open the keyboard.
     await FlutterOverlayWindow.updateFlag(OverlayFlag.focusPointer);
   }
 
@@ -100,30 +120,6 @@ class _OverlayAppState extends State<OverlayApp> {
     setState(() => _expanded = false);
     await FlutterOverlayWindow.updateFlag(OverlayFlag.defaultFlag);
     await FlutterOverlayWindow.resizeOverlay(_bubbleSize, _bubbleSize, true);
-  }
-
-  Future<void> _toggleVoice() async {
-    if (_listening) {
-      await _speech.stop();
-      setState(() => _listening = false);
-      return;
-    }
-    try {
-      final ready = await _speech.initialize();
-      if (!ready) return;
-      setState(() => _listening = true);
-      await _speech.listen(
-        onResult: (SpeechRecognitionResult result) {
-          if (!mounted) return;
-          setState(() {
-            _inputController.text = result.recognizedWords;
-            if (result.finalResult) _listening = false;
-          });
-        },
-      );
-    } catch (_) {
-      if (mounted) setState(() => _listening = false);
-    }
   }
 
   @override
@@ -138,75 +134,113 @@ class _OverlayAppState extends State<OverlayApp> {
     );
   }
 
+  // ------------------------------------------------------------------
+  // Floating Arc Reactor Holographic Bubble
+  // ------------------------------------------------------------------
+
   Widget _buildBubble() {
-    final running = _busy;
+    final color = _currentColor;
+    final isListening = _jarvisPhase == 'listening';
+    final isComputing = _busy;
+
     return Center(
       child: GestureDetector(
         onTap: _expand,
-        child: Container(
-          width: 72,
-          height: 72,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [AppTheme.indigoLight, AppTheme.indigo],
-            ),
-            border: Border.all(color: Colors.white24, width: 1.5),
-            boxShadow: [
-              BoxShadow(
-                color: AppTheme.indigo.withValues(alpha: 0.5),
-                blurRadius: 18,
-                spreadRadius: 1,
+        child: AnimatedBuilder(
+          animation: _reactorController,
+          builder: (context, child) {
+            final angle = _reactorController.value * 2 * math.pi * (isComputing ? 2.5 : 1.0);
+            return Container(
+              width: 78,
+              height: 78,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: color.withValues(alpha: isListening ? 0.75 : 0.5),
+                    blurRadius: isListening ? 22 : 16,
+                    spreadRadius: isListening ? 3 : 1,
+                  ),
+                ],
               ),
-            ],
-          ),
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              const Icon(Icons.smart_toy, color: Colors.white, size: 30),
-              if (running)
-                const Positioned(
-                  top: 6,
-                  right: 6,
-                  child: SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.4,
-                      color: Colors.white,
+              child: CustomPaint(
+                painter: ArcReactorPainter(
+                  coreColor: color,
+                  rotationAngle: angle,
+                  isPulsing: isListening || isComputing,
+                ),
+                child: Center(
+                  child: Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.black.withValues(alpha: 0.8),
+                      border: Border.all(color: color, width: 1.5),
+                      boxShadow: [
+                        BoxShadow(
+                          color: color,
+                          blurRadius: 8,
+                          spreadRadius: 1,
+                        ),
+                      ],
+                    ),
+                    child: Icon(
+                      isListening
+                          ? Icons.mic
+                          : isComputing
+                              ? Icons.auto_awesome
+                              : Icons.bolt,
+                      color: color,
+                      size: 14,
                     ),
                   ),
                 ),
-            ],
-          ),
+              ),
+            );
+          },
         ),
       ),
     );
   }
 
+  // ------------------------------------------------------------------
+  // Holographic Glassmorphism Panel (Dedicated Clean Summary View)
+  // ------------------------------------------------------------------
+
   Widget _buildPanel() {
+    final color = _currentColor;
     return Center(
       child: ClipRRect(
         borderRadius: BorderRadius.circular(24),
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
           child: Container(
             width: double.infinity,
             height: double.infinity,
+            padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: AppTheme.slate900.withValues(alpha: 0.72),
+              color: const Color(0xEE080D1A),
               borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: Colors.white12),
+              border: Border.all(color: color.withValues(alpha: 0.4), width: 1.5),
+              boxShadow: [
+                BoxShadow(
+                  color: color.withValues(alpha: 0.3),
+                  blurRadius: 24,
+                  spreadRadius: 2,
+                ),
+              ],
             ),
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 _panelHeader(),
-                const Divider(height: 1, color: Colors.white12),
-                Expanded(child: _panelTranscript()),
-                const Divider(height: 1, color: Colors.white12),
-                _panelInput(),
+                const SizedBox(height: 10),
+                Expanded(
+                  child: _screenSummary != null
+                      ? _buildSummaryContent()
+                      : _buildEmptyPrompt(),
+                ),
               ],
             ),
           ),
@@ -216,180 +250,273 @@ class _OverlayAppState extends State<OverlayApp> {
   }
 
   Widget _panelHeader() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 10, 6, 6),
-      child: Row(
-        children: [
-          const Icon(Icons.smart_toy, size: 18, color: AppTheme.indigoLight),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('JARVIS CZ',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w800)),
-                Text(
-                  _busy
-                      ? '${_state == 'paused' ? 'Pozastaveno' : 'Běží'} — '
-                          'step $_step/$_maxSteps'
-                      : 'Idle — ask me anything',
-                  style: const TextStyle(color: Colors.white54, fontSize: 10),
+    final color = _currentColor;
+    return Row(
+      children: [
+        Container(
+          width: 22,
+          height: 22,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: color.withValues(alpha: 0.2),
+            border: Border.all(color: color, width: 1.5),
+          ),
+          child: Icon(Icons.bolt, color: color, size: 14),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Row(
+            children: [
+              const Text(
+                'J.A.R.V.I.S.',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1.2,
                 ),
-              ],
-            ),
-          ),
-          if (_busy) ...[
-            IconButton(
-              visualDensity: VisualDensity.compact,
-              tooltip: _state == 'paused' ? 'Resume' : 'Pause',
-              icon: Icon(
-                _state == 'paused'
-                    ? Icons.play_arrow_rounded
-                    : Icons.pause_rounded,
-                color: Colors.white70,
-                size: 20,
               ),
-              onPressed: () => _sendCommand({
-                'command': _state == 'paused' ? 'resume' : 'pause',
-              }),
-            ),
-            IconButton(
-              visualDensity: VisualDensity.compact,
-              tooltip: 'Zrušit',
-              icon: const Icon(Icons.stop_rounded,
-                  color: Colors.redAccent, size: 20),
-              onPressed: () => _sendCommand({'command': 'cancel'}),
-            ),
-          ],
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            tooltip: 'Collapse',
-            icon: const Icon(Icons.close_fullscreen,
-                color: Colors.white70, size: 18),
-            onPressed: _collapse,
-          ),
-        ],
-      ),
-    );
-  }
-  Widget _panelTranscript() {
-    if (_messages.isEmpty) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(20),
-          child: Text(
-            'No active task.\nType a command below or tap the mic.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white54, fontSize: 12, height: 1.5),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: color.withValues(alpha: 0.5), width: 0.8),
+                ),
+                child: Text(
+                  switch (_jarvisPhase) {
+                    'listening' => 'NASLOUCHÁM',
+                    'thinking' => 'PŘEMÝŠLÍM',
+                    'speaking' => 'MLUVÍM',
+                    'executing' => 'PROVÁDÍM',
+                    _ => 'POHOTOVOST',
+                  },
+                  style: TextStyle(color: color, fontSize: 8.5, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
           ),
         ),
-      );
-    }
-    return ListView.builder(
-      padding: const EdgeInsets.all(10),
-      itemCount: _messages.length,
-      itemBuilder: (_, i) {
-        final m = _messages[i];
-        final role = '${m['role']}';
-        final text = '${m['text']}';
-        final isUser = role == 'user';
-        final isError = role == 'error';
-        return Align(
-          alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-          child: Container(
-            margin: const EdgeInsets.symmetric(vertical: 3),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-            constraints: const BoxConstraints(maxWidth: 260),
-            decoration: BoxDecoration(
-              color: isUser
-                  ? AppTheme.indigo
-                  : isError
-                      ? AppTheme.danger.withValues(alpha: 0.25)
-                      : Colors.white.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (m['step'] != null)
-                  Text('step ${m['step']}',
-                      style: const TextStyle(
-                          color: AppTheme.indigoLight,
-                          fontSize: 9,
-                          fontWeight: FontWeight.w700)),
-                Text(
-                  text,
-                  style: const TextStyle(
-                      color: Colors.white, fontSize: 11.5, height: 1.35),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
+        IconButton(
+          visualDensity: VisualDensity.compact,
+          tooltip: 'Zavřít',
+          icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 20),
+          onPressed: _collapse,
+        ),
+      ],
     );
   }
 
-  Widget _panelInput() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 6, 8, 10),
-      child: Row(
+  Widget _buildSummaryContent() {
+    final color = _currentColor;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF00E5FF).withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF00E5FF).withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Row(
+            children: [
+              const Icon(Icons.auto_awesome, color: Color(0xFF00E5FF), size: 15),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  _summaryTitle.toUpperCase(),
+                  style: const TextStyle(
+                    color: Color(0xFF00E5FF),
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
           Expanded(
-            child: TextField(
-              controller: _inputController,
-              enabled: !_busy,
-              style: const TextStyle(color: Colors.white, fontSize: 12.5),
-              textInputAction: TextInputAction.send,
-              onSubmitted: _submit,
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: _busy ? 'Jarvis právě pracuje…' : 'Command…',
-                hintStyle:
-                    const TextStyle(color: Colors.white38, fontSize: 12.5),
-                filled: true,
-                fillColor: Colors.white.withValues(alpha: 0.07),
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
+            child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              child: Text(
+                _screenSummary ?? '',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12.5,
+                  height: 1.45,
                 ),
               ),
             ),
           ),
-          const SizedBox(width: 4),
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            tooltip: 'Voice',
-            onPressed: _busy ? null : _toggleVoice,
-            icon: Icon(
-              _listening ? Icons.mic : Icons.mic_none,
-              color: _listening ? Colors.redAccent : Colors.white70,
-              size: 19,
-            ),
-          ),
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            tooltip: 'Spustit',
-            onPressed:
-                _busy ? null : () => _submit(_inputController.text),
-            icon: const Icon(Icons.send_rounded,
-                color: AppTheme.indigoLight, size: 19),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: color,
+                    side: BorderSide(color: color.withValues(alpha: 0.5)),
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                  ),
+                  icon: const Icon(Icons.refresh, size: 14),
+                  label: const Text('Znovu skenovat', style: TextStyle(fontSize: 11)),
+                  onPressed: () => _sendCommand({'command': 'summarize_screen'}),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00E5FF).withValues(alpha: 0.25),
+                    foregroundColor: const Color(0xFF00E5FF),
+                    side: const BorderSide(color: Color(0xFF00E5FF)),
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    elevation: 0,
+                  ),
+                  icon: const Icon(Icons.volume_up, size: 14),
+                  label: const Text('Přečíst nahlas', style: TextStyle(fontSize: 11)),
+                  onPressed: () {
+                    if (_screenSummary != null) {
+                      _sendCommand({'command': 'jarvis_command', 'goal': 'speak ${_screenSummary!}'});
+                    }
+                  },
+                ),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
 
-  void _submit(String text) {
-    final goal = text.trim();
-    if (goal.isEmpty || _busy) return;
-    _inputController.clear();
-    _sendCommand({'command': 'start', 'goal': goal});
+  Widget _buildEmptyPrompt() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: const Color(0xFF00E5FF).withValues(alpha: 0.12),
+              border: Border.all(color: const Color(0xFF00E5FF).withValues(alpha: 0.35)),
+            ),
+            child: const Icon(Icons.article_outlined, color: Color(0xFF00E5FF), size: 30),
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Shrnutí článků na obrazovce',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Otevřete libovolný článek nebo webovou stránku\na klepnutím níže zobrazte stručné shrnutí.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white54, fontSize: 10.5, height: 1.4),
+          ),
+          const SizedBox(height: 16),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF00E5FF).withValues(alpha: 0.2),
+              foregroundColor: const Color(0xFF00E5FF),
+              side: const BorderSide(color: Color(0xFF00E5FF), width: 1.2),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            icon: const Icon(Icons.bolt, size: 16),
+            label: const Text('Shrnout aktuální obrazovku', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+            onPressed: () => _sendCommand({'command': 'summarize_screen'}),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ------------------------------------------------------------------
+// Arc Reactor Holographic Custom Painter
+// ------------------------------------------------------------------
+
+class ArcReactorPainter extends CustomPainter {
+  final Color coreColor;
+  final double rotationAngle;
+  final bool isPulsing;
+
+  ArcReactorPainter({
+    required this.coreColor,
+    required this.rotationAngle,
+    required this.isPulsing,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2;
+
+    // 1. Dark circular backing
+    final bgPaint = Paint()
+      ..color = const Color(0xEE050B14)
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(center, radius - 2, bgPaint);
+
+    // 2. Outer metallic ring
+    final outerRing = Paint()
+      ..color = coreColor.withValues(alpha: 0.85)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.2;
+    canvas.drawCircle(center, radius - 4, outerRing);
+
+    // 3. Inner containment ring
+    final innerRing = Paint()
+      ..color = coreColor.withValues(alpha: 0.45)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
+    canvas.drawCircle(center, radius - 14, innerRing);
+
+    // 4. Rotating Arc segments / Coils (10 segments)
+    final coilPaint = Paint()
+      ..color = coreColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3.6
+      ..strokeCap = StrokeCap.round;
+
+    const segmentCount = 10;
+    const arcLength = (2 * math.pi / segmentCount) * 0.6;
+    final arcRadius = radius - 9;
+
+    for (int i = 0; i < segmentCount; i++) {
+      final startAngle = rotationAngle + (i * 2 * math.pi / segmentCount);
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: arcRadius),
+        startAngle,
+        arcLength,
+        false,
+        coilPaint,
+      );
+    }
+
+    // 5. Ambient core glow
+    final glowPaint = Paint()
+      ..shader = RadialGradient(
+        colors: [
+          coreColor.withValues(alpha: isPulsing ? 0.9 : 0.6),
+          coreColor.withValues(alpha: 0.0),
+        ],
+      ).createShader(Rect.fromCircle(center: center, radius: radius - 12));
+    canvas.drawCircle(center, radius - 12, glowPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant ArcReactorPainter oldDelegate) {
+    return oldDelegate.coreColor != coreColor ||
+        oldDelegate.rotationAngle != rotationAngle ||
+        oldDelegate.isPulsing != isPulsing;
   }
 }

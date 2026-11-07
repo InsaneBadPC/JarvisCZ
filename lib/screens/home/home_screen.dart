@@ -1,17 +1,25 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:intl/intl.dart';
-import 'package:speech_to_text/speech_recognition_result.dart';
 
 import '../../models/task_history_entry.dart';
-import '../../services/screen_automation_service.dart';
+import '../../services/calendar_reminder_service.dart';
+import '../../services/jarvis_service.dart';
+import '../../services/notes_knowledge_service.dart';
+import '../../services/proactive_agent_service.dart';
+import '../../services/screen_automation_service.dart' hide Size;
 import '../../services/settings_service.dart';
 import '../../services/task_executor.dart';
+import '../../services/todo_service.dart';
 import '../../services/voice_service.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/brain_dump_dialog.dart';
 import '../../widgets/chat_bubble.dart';
+import '../../widgets/glass_widgets.dart';
+import '../../widgets/jarvis_hud_widget.dart';
+import '../../widgets/liquid_glass_mode_switcher.dart';
 import '../../widgets/status_chip.dart';
-import '../history/task_history_screen.dart';
 import '../sessions/session_detail_screen.dart';
 import '../settings/settings_screen.dart';
 
@@ -33,7 +41,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _serviceEnabled = false;
   bool _overlayActive = false;
   bool _listening = false;
-  AppMode _mode = AppMode.genie;
+  AppMode _mode = AppMode.agent;
 
   /// True while either an agent task or a chat reply is in flight.
   bool get _busy => _executor.isBusy || _executor.isChatBusy;
@@ -44,11 +52,45 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _executor.addListener(_onExecutorUpdate);
     _mode = SettingsService.instance.appMode;
+
+    // Connect Google Assistant style wake-word trigger to auto-switch into JARVIS HUD
+    JarvisService.instance.onWakeWordTriggered = () {
+      if (mounted && _mode != AppMode.jarvis) {
+        setState(() => _mode = AppMode.jarvis);
+        SettingsService.instance.setAppMode(AppMode.jarvis);
+        JarvisService.instance.speakGreeting(force: true);
+      }
+    };
+
+    if (_mode == AppMode.jarvis) {
+      JarvisService.instance.onEnterJarvisMode();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        JarvisService.instance.speakGreeting();
+      });
+    }
+    if (SettingsService.instance.jarvisAlwaysOn) {
+      JarvisService.instance.ensureAlwaysOnRunning();
+    }
+    _voice.listeningNotifier.addListener(_onVoiceListeningChanged);
+    ProactiveAgentService.instance.addListener(_onProactiveUpdate);
+    ProactiveAgentService.instance.evaluateProactiveNeeds();
     _refreshStates();
+  }
+
+  void _onVoiceListeningChanged() {
+    if (mounted && _listening != _voice.listeningNotifier.value) {
+      setState(() => _listening = _voice.listeningNotifier.value);
+    }
   }
 
   @override
   void dispose() {
+    _voice.listeningNotifier.removeListener(_onVoiceListeningChanged);
+    ProactiveAgentService.instance.removeListener(_onProactiveUpdate);
+    JarvisService.instance.onWakeWordTriggered = null;
+    if (!SettingsService.instance.jarvisAlwaysOn) {
+      JarvisService.instance.onExitJarvisMode();
+    }
     WidgetsBinding.instance.removeObserver(this);
     _executor.removeListener(_onExecutorUpdate);
     _inputController.dispose();
@@ -89,14 +131,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     });
   }
 
+  void _onProactiveUpdate() {
+    if (mounted) setState(() {});
+  }
+
   void _submit(String text) {
     final goal = text.trim();
     if (goal.isEmpty || _busy) return;
     _inputController.clear();
-    if (_mode == AppMode.genie) {
+    if (_mode == AppMode.agent) {
       _executor.executeTask(goal);
-    } else {
+    } else if (_mode == AppMode.chat) {
       _executor.sendChatMessage(goal);
+    } else {
+      JarvisService.instance.processCommand(goal);
     }
   }
 
@@ -107,11 +155,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return;
     }
     final started = await _voice.startListening(
-      onResult: (SpeechRecognitionResult result) {
+      continuous: false,
+      onResult: (words, isFinal, candidates) {
         if (!mounted) return;
         setState(() {
-          _inputController.text = result.recognizedWords;
-          if (result.finalResult) _listening = false;
+          _inputController.text = words;
+          if (isFinal) _listening = false;
         });
       },
     );
@@ -119,7 +168,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Speech recognition unavailable — check microphone permission.',
+            'Rozpoznávání řeči není k dispozici — zkontrolujte oprávnění k mikrofonu.',
           ),
         ),
       );
@@ -142,8 +191,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           width: 120,
           alignment: OverlayAlignment.centerRight,
           flag: OverlayFlag.defaultFlag,
-          overlayTitle: 'JARVIS CZ',
-          overlayContent: 'Bublina aktivni',
+          overlayTitle: 'PrivateAgent',
+          overlayContent: 'Bublina agenta je aktivní',
           enableDrag: true,
           positionGravity: PositionGravity.auto,
         );
@@ -152,7 +201,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Overlay error: $e')));
+        ).showSnackBar(SnackBar(content: Text('Chyba překrytí: $e')));
       }
     }
     await _refreshStates();
@@ -161,14 +210,33 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Scaffold(
+    final isJarvis = _mode == AppMode.jarvis;
+
+    return LiquidGlassScaffold(
+      isJarvis: isJarvis,
       drawer: _sessionsDrawer(theme),
       appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        iconTheme:
+            isJarvis ? const IconThemeData(color: Color(0xFF00E5FF)) : null,
         title: Row(
           children: [
-            Image.asset('assets/icon/genie_logo.png', width: 30, height: 30),
-            const SizedBox(width: 10),
-            const Text('JARVIS CZ'),
+            Text(
+              isJarvis ? 'JARVIS' : 'PrivateAgent',
+              style: isJarvis
+                  ? const TextStyle(
+                      color: Color(0xFF00E5FF),
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 2.8,
+                      fontFamily: 'monospace',
+                    )
+                  : const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.4,
+                    ),
+            ),
             const SizedBox(width: 10),
             ServiceStatusDot(enabled: _serviceEnabled),
           ],
@@ -176,23 +244,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         actions: [
           IconButton(
             tooltip: _overlayActive
-                ? 'Hide floating bubble'
-                : 'Show floating bubble',
+                ? 'Skrýt plovoucí bublinu'
+                : 'Zobrazit plovoucí bublinu',
             onPressed: _toggleOverlay,
             icon: Icon(
               _overlayActive ? Icons.bubble_chart : Icons.bubble_chart_outlined,
-            ),
-          ),
-          IconButton(
-            tooltip: 'Task history',
-            icon: const Icon(Icons.history),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const TaskHistoryScreen()),
+              color: isJarvis ? const Color(0xFF00E5FF) : null,
             ),
           ),
           IconButton(
             tooltip: 'Nastavení',
-            icon: const Icon(Icons.settings_outlined),
+            icon: Icon(Icons.settings_outlined,
+                color: isJarvis ? const Color(0xFF00E5FF) : null),
             onPressed: () => Navigator.of(
               context,
             ).push(MaterialPageRoute(builder: (_) => const SettingsScreen())),
@@ -201,12 +264,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
       body: Column(
         children: [
-          if (!_serviceEnabled && _mode == AppMode.genie)
-            _serviceWarning(theme),
-          if (_executor.isBusy) _activeTaskBar(theme),
-          Expanded(child: _transcript(theme)),
           _modeSwitcher(theme),
-          _inputBar(theme),
+          if (!_serviceEnabled &&
+              (_mode == AppMode.agent || _mode == AppMode.jarvis))
+            _serviceWarning(theme),
+          if (_mode != AppMode.jarvis &&
+              ProactiveAgentService.instance.currentSuggestion != null)
+            _agentProactiveBanner(theme),
+          Expanded(
+            child: _mode == AppMode.jarvis
+                ? const JarvisHudWidget()
+                : Column(
+                    children: [
+                      if (_executor.isBusy) _activeTaskBar(theme),
+                      Expanded(child: _transcript(theme)),
+                      _inputBar(theme),
+                    ],
+                  ),
+          ),
         ],
       ),
     );
@@ -218,35 +293,30 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Widget _sessionsDrawer(ThemeData theme) {
     final entries = _executor.historyEntries;
+    final isDark = theme.brightness == Brightness.dark;
+
     return Drawer(
+      backgroundColor: isDark ? const Color(0xEE090E17) : const Color(0xEEFFFFFF),
+      elevation: 0,
       child: SafeArea(
         child: ListView(
           padding: EdgeInsets.zero,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Image.asset(
-                        'assets/icon/genie_logo.png',
-                        width: 26,
-                        height: 26,
-                      ),
-                      const SizedBox(width: 10),
-                      Text(
-                        'JARVIS CZ',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ],
+                  Text(
+                    'PrivateAgent',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.5,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Chat sessions',
+                    'Relace chatu a historie úkolů',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
@@ -263,7 +333,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   child: CircularProgressIndicator(strokeWidth: 2.5),
                 ),
                 title: Text(
-                  _executor.currentGoal ?? 'Beh ukolu…',
+                  _executor.currentGoal ?? 'Běží úkol…',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -272,7 +342,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   ),
                 ),
                 subtitle: const Text(
-                  'Live session in progress',
+                  'Právě probíhá živá relace',
                   style: TextStyle(fontSize: 11),
                 ),
                 onTap: () => Navigator.of(context).pop(),
@@ -280,11 +350,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ListTile(
               leading: const Icon(Icons.add_comment_outlined),
               title: const Text(
-                'New chat',
+                'Nový chat',
                 style: TextStyle(fontWeight: FontWeight.w600),
               ),
               subtitle: const Text(
-                'Vymazat zivy prepis textu',
+                'Vymazat živý přepis',
                 style: TextStyle(fontSize: 11),
               ),
               enabled: !_executor.isBusy,
@@ -297,7 +367,72 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
               child: Text(
-                'RECENT SESSIONS',
+                'SADA PRO PRODUKTIVITU',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.1,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.checklist_outlined),
+              title: const Text('Úkoly a seznam úkolů', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              subtitle: Text(
+                '${TodoService.instance.pendingItems.length} nevyřízených položek',
+                style: const TextStyle(fontSize: 11),
+              ),
+              onTap: () {
+                Navigator.of(context).pop();
+                _showTodosSheet();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.calendar_month_outlined),
+              title: const Text('Kalendář a rozvrh', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              subtitle: Text(
+                '${CalendarReminderService.instance.items.length} naplánovaných událostí',
+                style: const TextStyle(fontSize: 11),
+              ),
+              onTap: () {
+                Navigator.of(context).pop();
+                _showCalendarSheet();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.menu_book_outlined),
+              title: const Text('Poznámky a znalostní báze', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              subtitle: Text(
+                '${NotesKnowledgeService.instance.notes.length} uložených poznámek',
+                style: const TextStyle(fontSize: 11),
+              ),
+              onTap: () {
+                Navigator.of(context).pop();
+                _showNotesSheet();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.alt_route_rounded, color: Color(0xFF00E5FF)),
+              title: const Text('Oddělovač více úkolů', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              subtitle: const Text(
+                'Paralelní engine pro chaotický výpis myšlenek',
+                style: TextStyle(fontSize: 11),
+              ),
+              onTap: () {
+                Navigator.of(context).pop();
+                showDialog(
+                  context: context,
+                  barrierColor: Colors.black.withValues(alpha: 0.65),
+                  builder: (_) => const BrainDumpDialog(),
+                );
+              },
+            ),
+            const Divider(indent: 12, endIndent: 12),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
+              child: Text(
+                'NEDÁVNÉ RELACE',
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w800,
@@ -310,7 +445,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
                 child: Text(
-                  'Zadne ulozene relace.\nRun a task and it will appear here.',
+                  'Zatím žádné uložené relace.\nSpusťte úkol a zobrazí se zde.',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                     height: 1.5,
@@ -366,143 +501,200 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _serviceWarning(ThemeData theme) {
-    return Material(
-      color: AppTheme.danger.withValues(alpha: 0.12),
-      child: ListTile(
-        dense: true,
-        leading: const Icon(
-          Icons.warning_amber_rounded,
-          color: AppTheme.danger,
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
+      child: GlassCard(
+        borderRadius: 16,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        backgroundColor: AppTheme.danger.withValues(alpha: 0.14),
+        borderColor: AppTheme.danger.withValues(alpha: 0.35),
+        onTap: _automation.openAccessibilitySettings,
+        child: const Row(
+          children: [
+            Icon(
+              Icons.warning_amber_rounded,
+              color: AppTheme.danger,
+              size: 22,
+            ),
+            SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Služba přístupnosti je vypnutá',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                      color: AppTheme.danger,
+                    ),
+                  ),
+                  SizedBox(height: 1),
+                  Text(
+                    'Klepnutím otevřete nastavení telefonu a povolíte ji',
+                    style: TextStyle(fontSize: 11.5),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.arrow_forward_ios_rounded,
+              size: 14,
+              color: AppTheme.danger,
+            ),
+          ],
         ),
-        title: const Text(
-          'Pristupnost je vypnuta',
-          style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-        ),
-        subtitle: const Text(
-          'Tap to open settings and enable it',
-          style: TextStyle(fontSize: 12),
-        ),
-        onTap: () => _automation.openAccessibilitySettings(),
       ),
     );
   }
 
   Widget _activeTaskBar(ThemeData theme) {
     final maxSteps = SettingsService.instance.maxSteps;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.primary.withValues(alpha: 0.08),
-        border: Border(
-          bottom: BorderSide(
-            color: theme.colorScheme.outline.withValues(alpha: 0.4),
-          ),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
+      child: GlassCard(
+        borderRadius: 18,
+        padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 32,
+              height: 32,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  CircularProgressIndicator(
+                    strokeWidth: 2.8,
+                    value: maxSteps == 0 ? null : _executor.step / maxSteps,
+                  ),
+                  Text(
+                    '${_executor.step}',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _executor.isPaused ? 'Pozastaveno' : 'Běží úkol',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                    ),
+                  ),
+                  Text(
+                    _executor.currentGoal ?? '',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              tooltip: _executor.isPaused ? 'Pokračovat' : 'Pozastavit',
+              icon: Icon(
+                _executor.isPaused
+                    ? Icons.play_arrow_rounded
+                    : Icons.pause_rounded,
+              ),
+              onPressed: () =>
+                  _executor.isPaused ? _executor.resume() : _executor.pause(),
+            ),
+            IconButton(
+              tooltip: 'Zrušit úkol',
+              icon: const Icon(Icons.stop_rounded, color: AppTheme.danger),
+              onPressed: _executor.cancel,
+            ),
+          ],
         ),
-      ),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 34,
-            height: 34,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                CircularProgressIndicator(
-                  strokeWidth: 3,
-                  value: maxSteps == 0 ? null : _executor.step / maxSteps,
-                ),
-                Text(
-                  '${_executor.step}',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _executor.isPaused ? 'Pozastaveno' : 'Beh ukolu',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13,
-                  ),
-                ),
-                Text(
-                  _executor.currentGoal ?? '',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            tooltip: _executor.isPaused ? 'Resume' : 'Pause',
-            icon: Icon(
-              _executor.isPaused
-                  ? Icons.play_arrow_rounded
-                  : Icons.pause_rounded,
-            ),
-            onPressed: () =>
-                _executor.isPaused ? _executor.resume() : _executor.pause(),
-          ),
-          IconButton(
-            tooltip: 'Zrusit ukol',
-            icon: const Icon(Icons.stop_rounded, color: AppTheme.danger),
-            onPressed: _executor.cancel,
-          ),
-        ],
       ),
     );
   }
 
   Widget _transcript(ThemeData theme) {
     if (_executor.logs.isEmpty) {
-      final isGenie = _mode == AppMode.genie;
+      final isAgent = _mode == AppMode.agent;
       return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                isGenie ? Icons.smart_toy_outlined : Icons.chat_outlined,
-                size: 56,
-                color: theme.colorScheme.outline,
-              ),
-              const SizedBox(height: 16),
-              Text(
-                isGenie
-                    ? 'What should I do on your phone?'
-                    : 'Chat with PrivateAgent',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+          child: GlassCard(
+            borderRadius: 24,
+            padding: const EdgeInsets.all(26),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 60,
+                  height: 60,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        theme.colorScheme.primary.withValues(alpha: 0.25),
+                        theme.colorScheme.primary.withValues(alpha: 0.05),
+                      ],
+                    ),
+                    border: Border.all(
+                      color: theme.colorScheme.primary.withValues(alpha: 0.4),
+                    ),
+                  ),
+                  child: Icon(
+                    isAgent ? Icons.smart_toy_rounded : Icons.chat_bubble_rounded,
+                    size: 28,
+                    color: theme.colorScheme.primary,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                isGenie
-                    ? 'Try: “Open WhatsApp and send a message to Mom”\n'
-                          '“Open YouTube and play lofi music”\n'
-                          '“Nastaveni and turn on Bluetooth”'
-                    : 'Ask me anything — questions, ideas, writing,\n'
-                          'translations…\n'
-                          'Switch to Genie mode to control your phone.',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                  height: 1.6,
+                const SizedBox(height: 18),
+                Text(
+                  isAgent
+                      ? 'Autonomní telefonní agent'
+                      : 'Soukromý AI asistent',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.3,
+                  ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 10),
+                Text(
+                  isAgent
+                      ? '„Otevři WhatsApp a napiš mámě“\n'
+                            '„Přehraj Closer na YouTube“\n'
+                            '„Otevři Nastavení a ukaž informace o úložišti“'
+                      : 'Zeptejte se na cokoliv — otázky, nápady, programování nebo psaní.\n'
+                            'Přepněte do režimu Agent nebo JARVIS pro autonomní ovládání zařízení.',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    height: 1.6,
+                    fontSize: 12.5,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.center,
+                  children: [
+                    _suggestionChip('„Co mi létá nad hlavou?“', () => _submit("What's flying above me?"), theme),
+                    _suggestionChip('„Aktivuj vzdušná gesta“', () => _submit("Activate air gestures"), theme),
+                    _suggestionChip('„Kdo je na mé Wi-Fi?“', () => _submit("Scan devices on my wifi"), theme),
+                    _suggestionChip('„Přehraj Closer na YouTube“', () => _submit("Play Closer on YouTube"), theme),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       );
@@ -515,42 +707,213 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
+  Widget _suggestionChip(String label, VoidCallback onTap, ThemeData theme) {
+    return ActionChip(
+      label: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11.5,
+          color: theme.colorScheme.primary,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      backgroundColor: theme.colorScheme.primary.withValues(alpha: 0.08),
+      side: BorderSide(
+        color: theme.colorScheme.primary.withValues(alpha: 0.25),
+        width: 0.8,
+      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      onPressed: onTap,
+    );
+  }
+
   Widget _inputBar(ThemeData theme) {
-    final isGenie = _mode == AppMode.genie;
+    final isAgent = _mode == AppMode.agent;
+    final isDark = theme.brightness == Brightness.dark;
+
     return SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-        child: Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _inputController,
-                enabled: !_busy,
-                textInputAction: TextInputAction.send,
-                onSubmitted: _submit,
-                minLines: 1,
-                maxLines: 4,
-                decoration: InputDecoration(
-                  hintText: _busy
-                      ? (isGenie ? 'Genie is working…' : 'Thinking…')
-                      : (isGenie ? 'Describe a task…' : 'Message…'),
-                  prefixIcon: const Icon(Icons.chat_bubble_outline, size: 20),
+        padding: const EdgeInsets.fromLTRB(14, 6, 14, 12),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(28),
+            boxShadow: [
+              BoxShadow(
+                color: isDark
+                    ? Colors.black.withValues(alpha: 0.35)
+                    : Colors.black.withValues(alpha: 0.08),
+                blurRadius: 16,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(28),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(14, 4, 6, 4),
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? Colors.white.withValues(alpha: 0.06)
+                      : Colors.white.withValues(alpha: 0.85),
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(
+                    color: isDark
+                        ? Colors.white.withValues(alpha: 0.14)
+                        : Colors.black.withValues(alpha: 0.08),
+                    width: 1.0,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _inputController,
+                        enabled: !_busy,
+                        textInputAction: TextInputAction.send,
+                        onSubmitted: _submit,
+                        minLines: 1,
+                        maxLines: 4,
+                        style: const TextStyle(fontSize: 14),
+                        decoration: InputDecoration(
+                          hintText: _busy
+                              ? (isAgent ? 'Agent vykonává úkol…' : 'Přemýšlím…')
+                              : (isAgent ? 'Popište úkol pro telefon…' : 'Zeptejte se na cokoliv…'),
+                          hintStyle: TextStyle(
+                            fontSize: 13.5,
+                            color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
+                          ),
+                          prefixIcon: Icon(
+                            isAgent ? Icons.smart_toy_outlined : Icons.chat_bubble_outline_rounded,
+                            size: 19,
+                            color: theme.colorScheme.primary.withValues(alpha: 0.8),
+                          ),
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    IconButton(
+                      tooltip: 'Hlasový vstup',
+                      onPressed: _busy ? null : _toggleListening,
+                      icon: Icon(
+                        _listening ? Icons.mic : Icons.mic_none_rounded,
+                        color: _listening ? AppTheme.danger : theme.colorScheme.primary,
+                      ),
+                    ),
+                    Container(
+                      margin: const EdgeInsets.only(right: 2),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            theme.colorScheme.primary,
+                            const Color(0xFF4F46E5),
+                          ],
+                        ),
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: theme.colorScheme.primary.withValues(alpha: 0.35),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: IconButton(
+                        tooltip: isAgent ? 'Spustit úkol' : 'Odeslat',
+                        onPressed: _busy ? null : () => _submit(_inputController.text),
+                        icon: const Icon(Icons.arrow_upward_rounded, color: Colors.white, size: 20),
+                        padding: const EdgeInsets.all(8),
+                        constraints: const BoxConstraints(),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Agent / Chat / JARVIS mode switcher with Liquid Glass UI.
+  Widget _modeSwitcher(ThemeData theme) {
+    return LiquidGlassModeSwitcher(
+      selectedMode: _mode,
+      isBusy: _busy,
+      onModeChanged: (mode) {
+        final previousMode = _mode;
+        setState(() => _mode = mode);
+        SettingsService.instance.setAppMode(mode);
+        if (mode == AppMode.jarvis) {
+          JarvisService.instance.speakGreeting(force: true);
+        } else if (previousMode == AppMode.jarvis) {
+          JarvisService.instance.onExitJarvisMode();
+        }
+      },
+    );
+  }
+
+  Widget _agentProactiveBanner(ThemeData theme) {
+    final proactive = ProactiveAgentService.instance;
+    final suggestion = proactive.currentSuggestion;
+    if (suggestion == null) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
+      child: GlassCard(
+        borderRadius: 18,
+        padding: const EdgeInsets.all(12),
+        backgroundColor: theme.colorScheme.primaryContainer.withValues(alpha: 0.25),
+        borderColor: theme.colorScheme.primary.withValues(alpha: 0.35),
+        child: Row(
+          children: [
+            Icon(Icons.auto_awesome, color: theme.colorScheme.primary, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    suggestion.title,
+                    style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+                  ),
+                  Text(
+                    suggestion.description,
+                    style: theme.textTheme.bodySmall?.copyWith(fontSize: 11.5),
+                  ),
+                ],
+              ),
+            ),
             const SizedBox(width: 8),
-            IconButton.filledTonal(
-              tooltip: 'Hlas. vstup',
-              onPressed: _busy ? null : _toggleListening,
-              icon: Icon(_listening ? Icons.mic : Icons.mic_none),
-              color: _listening ? AppTheme.danger : null,
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: theme.colorScheme.primary,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                minimumSize: const Size(0, 0),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              onPressed: () {
+                final goal = suggestion.actionGoal;
+                proactive.dismissSuggestion();
+                _submit(goal);
+              },
+              child: const Text('Provést', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700)),
             ),
             const SizedBox(width: 4),
-            IconButton.filled(
-              tooltip: isGenie ? 'Spustit' : 'Send',
-              onPressed: _busy ? null : () => _submit(_inputController.text),
-              icon: const Icon(Icons.send_rounded),
+            IconButton(
+              icon: const Icon(Icons.close, size: 16),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              onPressed: () => proactive.dismissSuggestion(),
             ),
           ],
         ),
@@ -558,34 +921,473 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  /// Genie (agent) / Chat mode switcher shown above the input bar.
-  Widget _modeSwitcher(ThemeData theme) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
-      child: SegmentedButton<AppMode>(
-        showSelectedIcon: false,
-        segments: const [
-          ButtonSegment(
-            value: AppMode.genie,
-            icon: Icon(Icons.auto_awesome, size: 18),
-            label: Text('Jarvis'),
-            tooltip: 'Režim agenta — ovládá váš telefon',
+  void _showTodosSheet() {
+    final addController = TextEditingController();
+    var priority = TodoPriority.medium;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            final todoService = TodoService.instance;
+            final items = todoService.items;
+
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.only(
+                  bottom: MediaQuery.of(context).viewInsets.bottom,
+                  left: 16,
+                  right: 16,
+                  top: 16,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.checklist_outlined),
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Text(
+                            'Sledování úkolů',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () => Navigator.of(context).pop(),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: addController,
+                            decoration: const InputDecoration(
+                              hintText: 'Přidat nový úkol...',
+                              isDense: true,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        DropdownButton<TodoPriority>(
+                          value: priority,
+                          underline: const SizedBox.shrink(),
+                          items: const [
+                            DropdownMenuItem(
+                              value: TodoPriority.low,
+                              child: Text('Nízká', style: TextStyle(fontSize: 12)),
+                            ),
+                            DropdownMenuItem(
+                              value: TodoPriority.medium,
+                              child: Text('Střední', style: TextStyle(fontSize: 12)),
+                            ),
+                            DropdownMenuItem(
+                              value: TodoPriority.high,
+                              child: Text('Vysoká', style: TextStyle(fontSize: 12, color: Colors.red)),
+                            ),
+                          ],
+                          onChanged: (p) {
+                            if (p != null) setModalState(() => priority = p);
+                          },
+                        ),
+                        const SizedBox(width: 4),
+                        IconButton.filled(
+                          icon: const Icon(Icons.add, size: 20),
+                          onPressed: () async {
+                            final text = addController.text.trim();
+                            if (text.isNotEmpty) {
+                              await todoService.addTask(text, priority: priority);
+                              addController.clear();
+                              setModalState(() {});
+                              setState(() {});
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight: MediaQuery.of(context).size.height * 0.45,
+                      ),
+                      child: items.isEmpty
+                          ? const Center(
+                              child: Padding(
+                                padding: EdgeInsets.all(24),
+                                child: Text('Zatím nebyly vytvořeny žádné úkoly.'),
+                              ),
+                            )
+                          : ListView.builder(
+                              shrinkWrap: true,
+                              itemCount: items.length,
+                              itemBuilder: (context, i) {
+                                final item = items[i];
+                                return ListTile(
+                                  dense: true,
+                                  leading: Checkbox(
+                                    value: item.isDone,
+                                    onChanged: (_) async {
+                                      await todoService.toggleDone(item.id);
+                                      setModalState(() {});
+                                      setState(() {});
+                                    },
+                                  ),
+                                  title: Text(
+                                    item.title,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      decoration: item.isDone ? TextDecoration.lineThrough : null,
+                                      color: item.isDone ? Colors.grey : null,
+                                    ),
+                                  ),
+                                  subtitle: Text(
+                                    'Priorita: ${switch (item.priority) { TodoPriority.high => 'VYSOKÁ', TodoPriority.medium => 'STŘEDNÍ', TodoPriority.low => 'NÍZKÁ' }}',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: item.priority == TodoPriority.high
+                                          ? Colors.red
+                                          : (item.priority == TodoPriority.medium
+                                              ? Colors.orange
+                                              : Colors.blueGrey),
+                                    ),
+                                  ),
+                                  trailing: IconButton(
+                                    icon: const Icon(Icons.delete_outline, size: 18),
+                                    onPressed: () async {
+                                      await todoService.deleteTask(item.id);
+                                      setModalState(() {});
+                                      setState(() {});
+                                    },
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showCalendarSheet() {
+    final titleController = TextEditingController();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            final calendar = CalendarReminderService.instance;
+            final items = calendar.items;
+
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.only(
+                  bottom: MediaQuery.of(context).viewInsets.bottom,
+                  left: 16,
+                  right: 16,
+                  top: 16,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.calendar_month_outlined),
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Text(
+                            'Kalendář a připomínky',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () => Navigator.of(context).pop(),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: titleController,
+                            decoration: const InputDecoration(
+                              hintText: 'Přidat připomínku (např. „Návštěva lékaře“)',
+                              isDense: true,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton.filled(
+                          icon: const Icon(Icons.add_alarm_rounded, size: 20),
+                          onPressed: () async {
+                            final text = titleController.text.trim();
+                            if (text.isNotEmpty) {
+                              await calendar.addItem(
+                                title: text,
+                                dateTime: DateTime.now().add(const Duration(hours: 1)),
+                                isReminder: true,
+                              );
+                              titleController.clear();
+                              setModalState(() {});
+                              setState(() {});
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton.icon(
+                        icon: const Icon(Icons.open_in_new, size: 16),
+                        label: const Text('Otevřít systémový kalendář', style: TextStyle(fontSize: 12)),
+                        onPressed: () async {
+                          await calendar.openNativeCalendarInsert(
+                            title: 'Nová událost',
+                            beginTime: DateTime.now().add(const Duration(hours: 1)),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight: MediaQuery.of(context).size.height * 0.40,
+                      ),
+                      child: items.isEmpty
+                          ? const Center(
+                              child: Padding(
+                                padding: EdgeInsets.all(24),
+                                child: Text('Žádné naplánované události.'),
+                              ),
+                            )
+                          : ListView.builder(
+                              shrinkWrap: true,
+                              itemCount: items.length,
+                              itemBuilder: (context, i) {
+                                final item = items[i];
+                                return ListTile(
+                                  dense: true,
+                                  leading: Icon(
+                                    item.isReminder ? Icons.alarm : Icons.event_note,
+                                    size: 20,
+                                  ),
+                                  title: Text(item.title, style: const TextStyle(fontSize: 13)),
+                                  subtitle: Text(
+                                    DateFormat.yMMMd().add_jm().format(item.dateTime),
+                                    style: const TextStyle(fontSize: 11),
+                                  ),
+                                  trailing: IconButton(
+                                    icon: const Icon(Icons.delete_outline, size: 18),
+                                    onPressed: () async {
+                                      await calendar.deleteItem(item.id);
+                                      setModalState(() {});
+                                      setState(() {});
+                                    },
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showNotesSheet() {
+    final searchController = TextEditingController();
+    String query = '';
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            final notesService = NotesKnowledgeService.instance;
+            final notes = query.isEmpty
+                ? notesService.notes
+                : notesService.searchNotes(query);
+
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.only(
+                  bottom: MediaQuery.of(context).viewInsets.bottom,
+                  left: 16,
+                  right: 16,
+                  top: 16,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.menu_book_outlined),
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Text(
+                            'Poznámky a znalostní báze',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () => Navigator.of(context).pop(),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: searchController,
+                            decoration: const InputDecoration(
+                              hintText: 'Hledat v poznámkách a znalostech...',
+                              prefixIcon: Icon(Icons.search, size: 18),
+                              isDense: true,
+                            ),
+                            onChanged: (val) {
+                              setModalState(() => query = val.trim());
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton.filled(
+                          icon: const Icon(Icons.note_add_outlined, size: 20),
+                          tooltip: 'Nová poznámka',
+                          onPressed: () => _createNoteDialog(context, () {
+                            setModalState(() {});
+                            setState(() {});
+                          }),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight: MediaQuery.of(context).size.height * 0.45,
+                      ),
+                      child: notes.isEmpty
+                          ? const Center(
+                              child: Padding(
+                                padding: EdgeInsets.all(24),
+                                child: Text('Žádné poznámky nenalezeny.'),
+                              ),
+                            )
+                          : ListView.builder(
+                              shrinkWrap: true,
+                              itemCount: notes.length,
+                              itemBuilder: (context, i) {
+                                final note = notes[i];
+                                return ListTile(
+                                  dense: true,
+                                  title: Text(
+                                    note.title,
+                                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                                  ),
+                                  subtitle: Text(
+                                    note.content,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 11),
+                                  ),
+                                  trailing: IconButton(
+                                    icon: const Icon(Icons.delete_outline, size: 18),
+                                    onPressed: () async {
+                                      await notesService.deleteNote(note.id);
+                                      setModalState(() {});
+                                      setState(() {});
+                                    },
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _createNoteDialog(BuildContext context, VoidCallback onSaved) {
+    final titleCtrl = TextEditingController();
+    final contentCtrl = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Nová poznámka'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: titleCtrl,
+              decoration: const InputDecoration(labelText: 'Název'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: contentCtrl,
+              maxLines: 4,
+              decoration: const InputDecoration(labelText: 'Obsah'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Zrušit'),
           ),
-          ButtonSegment(
-            value: AppMode.chat,
-            icon: Icon(Icons.chat_bubble_outline, size: 18),
-            label: Text('Konverzace'),
-            tooltip: 'Chat mode — plain conversation',
+          FilledButton(
+            onPressed: () async {
+              final title = titleCtrl.text.trim();
+              final content = contentCtrl.text.trim();
+              if (content.isNotEmpty) {
+                await NotesKnowledgeService.instance.addNote(
+                  title: title.isEmpty ? 'Poznámka bez názvu' : title,
+                  content: content,
+                );
+                if (ctx.mounted) Navigator.of(ctx).pop();
+                onSaved();
+              }
+            },
+            child: const Text('Uložit poznámku'),
           ),
         ],
-        selected: {_mode},
-        onSelectionChanged: _busy
-            ? null
-            : (selection) {
-                final mode = selection.first;
-                setState(() => _mode = mode);
-                SettingsService.instance.setAppMode(mode);
-              },
       ),
     );
   }

@@ -37,7 +37,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Smazat historii?'),
+        title: const Text('Vymazat historii?'),
         content: const Text('Všechny zaznamenané běhy úkolů budou smazány.'),
         actions: [
           TextButton(
@@ -46,7 +46,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Smazat'),
+            child: const Text('Vymazat'),
           ),
         ],
       ),
@@ -64,7 +64,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
         actions: [
           if (entries.isNotEmpty)
             IconButton(
-              tooltip: 'Clear all',
+              tooltip: 'Vymazat vše',
               icon: const Icon(Icons.delete_sweep_outlined),
               onPressed: _clearAll,
             ),
@@ -78,11 +78,11 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                   Icon(Icons.history_toggle_off,
                       size: 48, color: theme.colorScheme.outline),
                   const SizedBox(height: 12),
-                  Text('No tasks yet',
+                  Text('Zatím žádné úkoly',
                       style: theme.textTheme.titleMedium
                           ?.copyWith(fontWeight: FontWeight.w600)),
                   const SizedBox(height: 4),
-                  Text('Run your first task from the home screen.',
+                  Text('Spusťte svůj první úkol z domovské obrazovky.',
                       style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant)),
                 ],
@@ -129,8 +129,8 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
           subtitle: Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Text(
-              '$date • ${entry.steps} step(s)'
-              '${duration != null ? ' • ${duration.inSeconds}s' : ''}',
+              '$date • ${entry.steps} kroků'
+              '${duration != null ? ' • ${duration.inSeconds} s' : ''}',
               style: theme.textTheme.bodySmall
                   ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
@@ -142,13 +142,13 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
               alignment: Alignment.centerRight,
               child: TextButton.icon(
                 onPressed: () => SharePlus.instance.share(ShareParams(
-                  text: 'Task: ${entry.goal}\n'
-                      'Status: ${entry.status.name} • ${entry.steps} steps\n\n'
+                  text: 'Úkol: ${entry.goal}\n'
+                      'Stav: ${entry.status.name} • ${entry.steps} kroků\n\n'
                       '${entry.logs.join('\n')}',
-                  subject: 'PrivateAgent task log',
+                  subject: 'Záznam úkolu PrivateAgent',
                 )),
                 icon: const Icon(Icons.share_outlined, size: 16),
-                label: const Text('Share log'),
+                label: const Text('Sdílet záznam'),
               ),
             ),
             Container(

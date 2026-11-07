@@ -52,16 +52,79 @@ class TaskStep {
     this.isComplete = false,
   });
 
-  factory TaskStep.fromJson(Map<String, dynamic> json) {
-    final rawAction = (json['action'] ?? '').toString().trim().toLowerCase();
+  factory TaskStep.fromJson(Map<dynamic, dynamic> json) {
+    var rawAction = (json['action'] ?? '').toString().trim().toLowerCase();
     final rawParams = json['params'];
+    final params = rawParams is Map
+        ? rawParams.map((k, v) => MapEntry(k.toString(), v))
+        : <String, dynamic>{};
+
+    // Normalize action aliases commonly produced by various LLM models
+    if (rawAction == 'open' ||
+        rawAction == 'launch' ||
+        rawAction == 'start' ||
+        rawAction == 'launch_app' ||
+        rawAction == 'openapp') {
+      rawAction = actionOpenApp;
+      if (!params.containsKey('app')) {
+        params['app'] = params['name'] ??
+            params['package'] ??
+            params['app_name'] ??
+            params['target'] ??
+            '';
+      }
+    } else if (rawAction == 'click' ||
+        rawAction == 'tap' ||
+        rawAction == 'press' ||
+        rawAction == 'touch') {
+      if (params.containsKey('x') || params.containsKey('y') || params.containsKey('coordinates')) {
+        rawAction = actionClickAt;
+      } else if (params.containsKey('app')) {
+        rawAction = actionOpenApp;
+      } else {
+        rawAction = actionClickText;
+        if (!params.containsKey('text')) {
+          params['text'] = params['label'] ??
+              params['target'] ??
+              params['name'] ??
+              params['value'] ??
+              '';
+        }
+      }
+    } else if (rawAction == 'type' ||
+        rawAction == 'input' ||
+        rawAction == 'write' ||
+        rawAction == 'enter_text' ||
+        rawAction == 'set_text') {
+      rawAction = actionTypeText;
+      if (!params.containsKey('text')) {
+        params['text'] = params['input'] ??
+            params['query'] ??
+            params['value'] ??
+            params['content'] ??
+            '';
+      }
+    } else if (rawAction == 'enter' || rawAction == 'search' || rawAction == 'submit') {
+      rawAction = actionPressEnter;
+    } else if (rawAction == 'back') {
+      rawAction = actionPressBack;
+    } else if (rawAction == 'home') {
+      rawAction = actionPressHome;
+    } else if (rawAction == 'finish' ||
+        rawAction == 'complete' ||
+        rawAction == 'completed' ||
+        rawAction == 'success' ||
+        rawAction == 'end') {
+      rawAction = actionDone;
+    }
+
     return TaskStep(
       action: rawAction,
-      params: rawParams is Map
-          ? rawParams.map((k, v) => MapEntry(k.toString(), v))
-          : const {},
+      params: params,
       reasoning: (json['reasoning'] ?? '').toString(),
-      isComplete: json['is_complete'] == true || json['isComplete'] == true,
+      isComplete: json['is_complete'] == true ||
+          json['isComplete'] == true ||
+          rawAction == actionDone,
     );
   }
 
@@ -94,36 +157,150 @@ class TaskStep {
   }
 
   /// Robustly extracts the first JSON object from raw LLM output, tolerating
-  /// markdown fences, leading prose and trailing commentary.
+  /// markdown fences, leading prose, trailing commentary, and natural language.
   static TaskStep? tryParse(String aiText) {
     var text = aiText.trim();
-    // Strip markdown code fences if present.
+    if (text.isEmpty) return null;
+
+    // 1. Strip markdown code fences if present.
     final fence = RegExp(r'```(?:json)?\s*([\s\S]*?)```', caseSensitive: false);
     final fenceMatch = fence.firstMatch(text);
     if (fenceMatch != null) text = fenceMatch.group(1)!.trim();
 
-    Map<String, dynamic>? decode(String candidate) {
+    Map<dynamic, dynamic>? decode(String candidate) {
       try {
         final decoded = jsonDecode(candidate);
-        if (decoded is Map<String, dynamic> && decoded.containsKey('action')) {
-          return decoded;
+        if (decoded is Map && decoded.containsKey('action')) {
+          return decoded.map((k, v) => MapEntry(k.toString(), v));
         }
       } catch (_) {}
       return null;
     }
 
+    // 2. Direct decode attempt
     var parsed = decode(text);
+
+    // 3. Fall back to scanning for balanced { ... } blocks containing "action"
     if (parsed == null) {
-      // Fall back to the widest balanced { ... } region.
+      var start = 0;
+      while (start < text.length) {
+        final braceStart = text.indexOf('{', start);
+        if (braceStart == -1) break;
+        int depth = 0;
+        int end = -1;
+        for (int i = braceStart; i < text.length; i++) {
+          if (text[i] == '{') depth++;
+          if (text[i] == '}') {
+            depth--;
+            if (depth == 0) {
+              end = i;
+              break;
+            }
+          }
+        }
+        if (end > braceStart) {
+          final candidate = text.substring(braceStart, end + 1);
+          if (candidate.contains('"action"') || candidate.contains("'action'")) {
+            parsed = decode(candidate);
+            if (parsed != null) break;
+          }
+          start = braceStart + 1;
+        } else {
+          break;
+        }
+      }
+    }
+
+    // 4. Widest balanced { ... } fallback
+    if (parsed == null) {
       final start = text.indexOf('{');
       final end = text.lastIndexOf('}');
       if (start >= 0 && end > start) {
         parsed = decode(text.substring(start, end + 1));
       }
     }
-    if (parsed == null) return null;
-    final step = TaskStep.fromJson(parsed);
-    return step.isSupported ? step : null;
+
+    // 5. If JSON was found, return normalized TaskStep
+    if (parsed != null) {
+      final step = TaskStep.fromJson(parsed);
+      if (step.isSupported) return step;
+    }
+
+    // 6. Intelligent heuristic fallback for natural language / conversational output from models
+    final lower = text.toLowerCase();
+    if (lower.contains('open ') || lower.contains('launch ') || lower.contains('otevři ') || lower.contains('spusť ')) {
+      final match = RegExp(
+        r'(?:open|launch|otevři|spusť)\s+(?:the\s+|aplikaci\s+)?([a-zA-Z0-9\s]+?)(?:\s+to|\s+app|\s+and|\.|\n|$)',
+        caseSensitive: false,
+      ).firstMatch(text);
+      if (match != null) {
+        final app = match.group(1)!.trim();
+        if (app.isNotEmpty && app.length < 35) {
+          return TaskStep(
+            action: actionOpenApp,
+            params: {'app': app},
+            reasoning: 'Extrahovaná akce: otevřít $app',
+          );
+        }
+      }
+    }
+
+    if (lower.contains('click ') || lower.contains('tap ') || lower.contains('press ') || lower.contains('klikni ') || lower.contains('klepni ')) {
+      final match = RegExp(
+        r'(?:click|tap|press|klikni|klepni)\s+(?:on\s+|na\s+)?(?:the\s+)?["\x27]?([^"\x27.\n]+)["\x27]?',
+        caseSensitive: false,
+      ).firstMatch(text);
+      if (match != null) {
+        var target = match.group(1)!.trim();
+        // Clean up prefixes like [0] (Button) Search -> Search
+        target = target
+            .replaceAll(RegExp(r'^\([a-zA-Z]+\)\s*'), '')
+            .replaceAll(RegExp(r'^\[\d+\]\s*'), '')
+            .replaceAll(RegExp(r'^\([a-zA-Z]+\)\s*'), '')
+            .replaceAll(RegExp(r'^["\x27\[\(]+|["\x27\]\)]+$'), '')
+            .trim();
+        if (target.isNotEmpty && target.length < 50) {
+          return TaskStep(
+            action: actionClickText,
+            params: {'text': target},
+            reasoning: 'Extrahovaná akce: kliknout na $target',
+          );
+        }
+      }
+    }
+
+    if (lower.contains('type ') || lower.contains('enter ') || lower.contains('search for ') || lower.contains('napiš ') || lower.contains('zadej ')) {
+      final match = RegExp(
+        r'(?:type|enter|search for|napiš|zadej)\s+["\x27]?([^"\x27.\n]+)["\x27]?',
+        caseSensitive: false,
+      ).firstMatch(text);
+      if (match != null) {
+        final query = match.group(1)!.trim();
+        if (query.isNotEmpty && query.length < 50) {
+          return TaskStep(
+            action: actionTypeText,
+            params: {'text': query},
+            reasoning: 'Extrahovaná akce: napsat $query',
+          );
+        }
+      }
+    }
+
+    if (lower.contains('task complete') ||
+        lower.contains('task completed') ||
+        lower.contains('goal complete') ||
+        lower.contains('successfully installed') ||
+        lower.contains('finished') ||
+        lower.contains('úkol dokončen') ||
+        lower.contains('hotovo')) {
+      return const TaskStep(
+        action: actionDone,
+        reasoning: 'Úkol označen v odpovědi jako dokončený',
+        isComplete: true,
+      );
+    }
+
+    return null;
   }
 
   @override

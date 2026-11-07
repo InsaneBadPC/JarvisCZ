@@ -107,9 +107,9 @@ class TelegramService extends ChangeNotifier {
     if (allowed.isEmpty && owner.isEmpty) {
       await settings.setTelegramOwnerChatId(chatId);
       await sendMessage(chatId,
-          '👋 PrivateAgent paired with this chat. Send me any task, e.g.\n'
-          '"Open YouTube and search for lofi music".\n\n'
-          'Commands: /status /screenshot /cancel');
+          '👋 PrivateAgent byl spárován s tímto chatem. Pošlete mi libovolný úkol, např.\n'
+          '„Otevři YouTube a vyhledej lofi hudbu“.\n\n'
+          'Příkazy: /status /screenshot /cancel');
       return;
     }
     final isAuthorized =
@@ -144,16 +144,24 @@ class TelegramService extends ChangeNotifier {
   /// Sends a PNG screenshot (base64) as a photo message.
   Future<bool> sendScreenshot(String chatId, String base64Png,
       {String? caption}) async {
+    return sendPhoto(chatId, base64Png, caption: caption ?? 'Snímek obrazovky PrivateAgent');
+  }
+
+  /// Sends a photo (base64 string or byte array) to Telegram with custom caption.
+  Future<bool> sendPhoto(String chatId, dynamic photoData, {String? caption}) async {
     if (_token.isEmpty) return false;
     try {
-      final bytes = base64Decode(base64Png);
+      final List<int> bytes = photoData is String
+          ? base64Decode(photoData)
+          : (photoData as List<int>);
+      if (bytes.isEmpty) return false;
       final request = http.MultipartRequest(
           'POST', Uri.parse('$_api/sendPhoto'))
         ..fields['chat_id'] = chatId
-        ..fields['caption'] =
-            caption ?? 'PrivateAgent screenshot'
-        ..files.add(http.MultipartFile.fromBytes('photo', bytes,
-            filename: 'screenshot.png'));
+        ..fields['caption'] = caption ?? '📸 Fotografická telemetrie J.A.R.V.I.S.'
+        ..files.add(http.MultipartFile.fromBytes(
+            'photo', bytes,
+            filename: 'snapshot.jpg'));
       final streamed = await _client.send(request);
       return streamed.statusCode == 200;
     } catch (_) {
@@ -168,9 +176,14 @@ class TelegramService extends ChangeNotifier {
       TaskStatus.cancelled => '⏹️',
       TaskStatus.failed => '❌',
     };
+    final statusCz = switch (entry.status) {
+      TaskStatus.success => 'úspěch',
+      TaskStatus.cancelled => 'zrušeno',
+      TaskStatus.failed => 'selhalo',
+    };
     final duration = entry.duration;
-    final seconds = duration == null ? '' : ' in ${duration.inSeconds}s';
+    final seconds = duration == null ? '' : ' za ${duration.inSeconds} s';
     return '$icon ${entry.goal}\n'
-        'Status: ${entry.status.name} • ${entry.steps} step(s)$seconds';
+        'Stav: $statusCz • ${entry.steps} krok(ů)$seconds';
   }
 }

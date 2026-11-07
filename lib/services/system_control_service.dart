@@ -1,6 +1,7 @@
 import 'dart:io' show Platform;
 
 import 'package:android_intent_plus/android_intent.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:screen_brightness/screen_brightness.dart';
@@ -98,7 +99,7 @@ class SystemControlService {
   Future<bool> setAlarm({
     required int hour,
     required int minute,
-    String label = 'PrivateAgent alarm',
+    String label = 'Budík J.A.R.V.I.S.',
   }) async {
     if (!Platform.isAndroid) return false;
     try {
@@ -188,7 +189,7 @@ class SystemControlService {
         android: AndroidNotificationDetails(
           'agent_status',
           'Stav agenta',
-          channelDescription: 'Notifikace o prubehu a dokonceni ukolu',
+          channelDescription: 'Oznámení o průběhu a dokončení úkolů',
           importance: Importance.high,
           priority: Priority.high,
         ),
@@ -220,6 +221,47 @@ class SystemControlService {
       return await _shizuku.runCommand(command);
     } catch (_) {
       return null;
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Media & Screen Automation Controls
+  // ------------------------------------------------------------------
+
+  Future<void> nextTrack() async {
+    try {
+      await const AndroidIntent(
+        action: 'android.intent.action.MEDIA_BUTTON',
+        arguments: {'android.intent.extra.KEY_EVENT': 87}, // KEYCODE_MEDIA_NEXT
+      ).sendBroadcast();
+    } catch (_) {}
+  }
+
+  Future<void> previousTrack() async {
+    try {
+      await const AndroidIntent(
+        action: 'android.intent.action.MEDIA_BUTTON',
+        arguments: {'android.intent.extra.KEY_EVENT': 88}, // KEYCODE_MEDIA_PREVIOUS
+      ).sendBroadcast();
+    } catch (_) {}
+  }
+
+  Future<void> togglePlayPause() async {
+    try {
+      await const AndroidIntent(
+        action: 'android.intent.action.MEDIA_BUTTON',
+        arguments: {'android.intent.extra.KEY_EVENT': 85}, // KEYCODE_MEDIA_PLAY_PAUSE
+      ).sendBroadcast();
+    } catch (_) {}
+  }
+
+  Future<bool> takeScreenshot() async {
+    try {
+      final res = await const MethodChannel('com.privateagent/accessibility')
+          .invokeMethod<bool>('takeScreenshot');
+      return res ?? false;
+    } catch (_) {
+      return false;
     }
   }
 }

@@ -10,7 +10,7 @@ class ChatMessage {
 
   final String id;
   final ChatRole role;
-  final String text;
+  String text;
   final DateTime time;
 
   /// Step number (1-based) when this message belongs to the agent loop.

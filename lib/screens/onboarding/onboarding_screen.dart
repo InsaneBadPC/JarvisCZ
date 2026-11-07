@@ -129,7 +129,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                   const Spacer(),
                   FilledButton(
                     onPressed: _next,
-                    child: Text(_page == 3 ? 'Get Started' : 'Continue'),
+                    child: Text(_page == 3 ? 'Začít používat' : 'Pokračovat'),
                   ),
                 ],
               ),
@@ -176,45 +176,93 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   Widget _welcomePage(ThemeData theme) {
     return _pageShell(
       theme,
-      icon: Icons.smart_toy_outlined,
-      title: 'Meet PrivateAgent',
-      subtitle: 'An on-device automation agent that turns natural language '
-          'into real actions on your phone — powered by your own LLM API key. '
-          'Nothing is shared except what goes to the provider you choose.',
+      icon: Icons.shield_outlined,
+      title: 'Seznamte se s J.A.R.V.I.S.em',
+      subtitle: 'Váš autonomní AI společník a telefonní kopilot nové generace ve stylu Stark Industries. '
+          'Hlasová inteligence na prvním místě, bezdotyková vzdušná gesta, živá telemetrie nabíjení '
+          'a autonomní automatizace zařízení.',
       children: [
-        _featureRow(theme, Icons.touch_app_outlined, 'Sees your screen',
-            'Reads the accessibility tree of any app to understand what is on screen.'),
-        _featureRow(theme, Icons.psychology_outlined, 'Thinks with an LLM',
-            'DeepSeek, OpenRouter, NVIDIA NIM or a local Ollama decide the next tap, swipe or input.'),
-        _featureRow(theme, Icons.bolt_outlined, 'Learns your routines',
-            'Successful tasks are memorized and replayed instantly, without API calls.'),
-        _featureRow(theme, Icons.send_outlined, 'Remote control',
-            'Optionally drive your phone from a Telegram chat, with screenshots.'),
+        _featureRow(
+          theme,
+          Icons.record_voice_over_rounded,
+          'Bezdotyková hlasová inteligence',
+          'Mluvte přirozeně s neurálním hlasem, denními přehledy kalendáře a agendy a plným ovládáním telefonu.',
+        ),
+        _featureRow(
+          theme,
+          Icons.pan_tool_rounded,
+          'Bezdotyková vzdušná gesta Iron Man',
+          'Mávnutím ruky ve vzduchu přeskočíte hudbu, podržením pozastavíte/přehrajete nebo dvojitým mávnutím pořídíte snímek obrazovky.',
+        ),
+        _featureRow(
+          theme,
+          Icons.view_in_ar_rounded,
+          'Duální 3D holografický HUD',
+          'Přepínejte mezi rotujícím jádrem obloukového reaktoru a 3D hologramem obleku Iron Mana s reaktivními změnami barev.',
+        ),
+        _featureRow(
+          theme,
+          Icons.security_rounded,
+          'Kybernetická obrana a režim Strážce',
+          'Taktická siréna proti krádeži, nouzové uzamčení Kód Černá, audit zařízení na Wi-Fi a radar vzdušného prostoru.',
+        ),
+        _featureRow(
+          theme,
+          Icons.translate_rounded,
+          'Polyglotní diplomat a optický řešitel',
+          'Hlasový překlad v reálném čase ve více než 14 jazycích a kamerový HUD řešitel pro rovnice, kód a účtenky.',
+        ),
       ],
     );
   }
 
   Widget _featureRow(
       ThemeData theme, IconData icon, String title, String body) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
+    final isDark = theme.brightness == Brightness.dark;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isDark
+            ? Colors.white.withValues(alpha: 0.05)
+            : Colors.black.withValues(alpha: 0.03),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: theme.colorScheme.primary.withValues(alpha: 0.20),
+          width: 1.0,
+        ),
+      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 22, color: theme.colorScheme.primary),
-          const SizedBox(width: 14),
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primary.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, size: 20, color: theme.colorScheme.primary),
+          ),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title,
-                    style: theme.textTheme.titleSmall
-                        ?.copyWith(fontWeight: FontWeight.w700)),
-                const SizedBox(height: 2),
-                Text(body,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                        height: 1.4)),
+                Text(
+                  title,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  body,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    height: 1.35,
+                  ),
+                ),
               ],
             ),
           ),
@@ -227,9 +275,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     return _pageShell(
       theme,
       icon: Icons.accessibility_new_outlined,
-      title: 'Povolit ovladani obr.',
-      subtitle: 'PrivateAgent works through an Android accessibility service. '
-          'This is what lets it read the screen and tap buttons for you.',
+      title: 'Povolit ovládání obrazovky',
+      subtitle: 'PrivateAgent funguje prostřednictvím služby přístupnosti systému Android. '
+          'Díky tomu dokáže číst obrazovku a klepat na tlačítka místo vás.',
       children: [
         Card(
           child: Padding(
@@ -247,14 +295,14 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 Expanded(
                   child: Text(
                     _serviceEnabled
-                        ? 'PrivateAgent Screen Control is enabled'
-                        : 'PrivateAgent Screen Control is OFF',
+                        ? 'Ovládání obrazovky PrivateAgent je povoleno'
+                        : 'Ovládání obrazovky PrivateAgent je VYPNUTO',
                     style: theme.textTheme.titleSmall
                         ?.copyWith(fontWeight: FontWeight.w600),
                   ),
                 ),
                 IconButton(
-                  tooltip: 'Re-check',
+                  tooltip: 'Znovu zkontrolovat',
                   onPressed: _refreshServiceState,
                   icon: const Icon(Icons.refresh),
                 ),
@@ -266,19 +314,19 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         FilledButton.icon(
           onPressed: () => _automation.openAccessibilitySettings(),
           icon: const Icon(Icons.settings_accessibility),
-          label: const Text('Otevrit pristupnost'),
+          label: const Text('Otevřít nastavení přístupnosti'),
         ),
         const SizedBox(height: 10),
         OutlinedButton.icon(
           onPressed: () => _automation.openAppInfoSettings(),
           icon: const Icon(Icons.info_outline),
-          label: const Text('Informace o aplikaci (Android 13+ omezená nastavení)'),
+          label: const Text('Otevřít informace o aplikaci (omezená nastavení Android 13+)'),
         ),
         const SizedBox(height: 16),
         Text(
-          'On Android 13 and newer you may need to open App Info → ⋮ menu → '
-          '"Allow restricted settings" first, then enable "PrivateAgent '
-          'Screen Control" under Accessibility → Downloaded apps.',
+          'V systému Android 13 a novějším bude možná nejprve nutné otevřít Informace o aplikaci → nabídka ⋮ → '
+          '„Povolit omezená nastavení“ a poté zapnout „PrivateAgent '
+          'Screen Control“ v části Přístupnost → Stažené aplikace.',
           style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant, height: 1.5),
         ),
@@ -289,9 +337,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     return _pageShell(
       theme,
       icon: Icons.key_outlined,
-      title: 'Pripojit mozek AI',
-      subtitle: 'Pick an OpenAI-compatible provider and paste your API key. '
-          'You can change this any time in Settings.',
+      title: 'Připojit mozek AI',
+      subtitle: 'Vyberte poskytovatele kompatibilního s OpenAI a vložte svůj klíč API. '
+          'Můžete to kdykoliv změnit v Nastavení.',
       children: [
         Wrap(
           spacing: 8,
@@ -313,9 +361,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
             child: Text(
-              'Ollama runs fully on your machine — no API key needed. '
-              'Start it with OLLAMA_HOST=0.0.0.0 ollama serve, then use '
-              'adb reverse tcp:11434 tcp:11434 so the phone can reach it.',
+              'Ollama běží plně na vašem počítači — klíč API není potřeba. '
+              'Spusťte ji příkazem OLLAMA_HOST=0.0.0.0 ollama serve a poté použijte '
+              'adb reverse tcp:11434 tcp:11434, aby se k ní telefon mohl připojit.',
               style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant, height: 1.5),
             ),
@@ -325,15 +373,15 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           obscureText: true,
           onChanged: (v) => _settings.setApiKey(v),
           decoration: const InputDecoration(
-            labelText: 'API key',
+            labelText: 'Klíč API',
             hintText: 'sk-…',
             prefixIcon: Icon(Icons.vpn_key_outlined),
           ),
         ),
         const SizedBox(height: 12),
         Text(
-          'The key is stored only on this device. The model can be changed '
-          'later (default: ${_settings.model}).',
+          'Klíč je uložen pouze v tomto zařízení. Model lze změnit '
+          'později (výchozí: ${_settings.model}).',
           style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant, height: 1.5),
         ),
@@ -345,15 +393,15 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     return _pageShell(
       theme,
       icon: Icons.verified_user_outlined,
-      title: 'Volitelna opravneni',
-      subtitle: 'These unlock voice commands, the floating bubble, '
-          'notifications and contact search. Skip anything you don\'t need.',
+      title: 'Volitelná oprávnění',
+      subtitle: 'Tato oprávnění odemykají hlasové příkazy, plovoucí bublinu, '
+          'oznámení a vyhledávání kontaktů. Cokoliv nepotřebujete, můžete přeskočit.',
       children: [
         _permissionTile(
           theme,
           icon: Icons.mic_none,
-          title: 'Microphone',
-          subtitle: 'Rikejte ukoly hlasem misto psani',
+          title: 'Mikrofon',
+          subtitle: 'Zadávejte úkoly hlasem místo psaní',
           onTap: () async {
           await Permission.microphone.request();
         },
@@ -361,8 +409,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         _permissionTile(
           theme,
           icon: Icons.notifications_none,
-          title: 'Notifications',
-          subtitle: 'Upozorneni na prubeh a konec uloh',
+          title: 'Oznámení',
+          subtitle: 'Upozornění na průběh a dokončení úkolů',
           onTap: () async {
             await Permission.notification.request();
           },
@@ -370,8 +418,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         _permissionTile(
           theme,
           icon: Icons.contacts_outlined,
-          title: 'Contacts',
-          subtitle: '“Call Mom”-style commands',
+          title: 'Kontakty',
+          subtitle: 'Příkazy typu „Zavolej mámě“',
           onTap: () async {
             await Permission.contacts.request();
           },
@@ -379,8 +427,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         _permissionTile(
           theme,
           icon: Icons.bubble_chart_outlined,
-          title: 'Plovouci bubl.',
-          subtitle: 'Ovladani agenta pri praci v jinych app',
+          title: 'Plovoucí bublina',
+          subtitle: 'Ovládejte agenta při používání jiných aplikací',
           onTap: () async {
             await FlutterOverlayWindow.requestPermission();
           },
