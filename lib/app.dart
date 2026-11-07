@@ -29,6 +29,9 @@ class _PrivateAgentAppState extends State<PrivateAgentApp> {
     _settings.addListener(_onSettingsChanged);
     ChargingTelemetryService.instance.showCinematicHud
         .addListener(_onChargingHudTriggered);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _onChargingHudTriggered();
+    });
   }
 
   @override
@@ -40,21 +43,27 @@ class _PrivateAgentAppState extends State<PrivateAgentApp> {
   }
 
   void _onChargingHudTriggered() {
-    if (ChargingTelemetryService.instance.showCinematicHud.value &&
-        !_chargingHudModalOpen) {
-      ChargingTelemetryService.instance.showCinematicHud.value = false;
-      final nav = PrivateAgentApp.navigatorKey.currentState;
-      if (nav != null) {
-        _chargingHudModalOpen = true;
-        showDialog(
-          context: nav.context,
-          barrierColor: Colors.black.withValues(alpha: 0.7),
-          builder: (_) => const ArcReactorChargingDialog(),
-        ).whenComplete(() {
-          _chargingHudModalOpen = false;
-        });
-      }
+    if (!ChargingTelemetryService.instance.showCinematicHud.value ||
+        _chargingHudModalOpen) {
+      return;
     }
+    final nav = PrivateAgentApp.navigatorKey.currentState;
+    if (nav == null) {
+      // Navigator not mounted yet (e.g. cold wake over lockscreen); retry next frame
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _onChargingHudTriggered();
+      });
+      return;
+    }
+    ChargingTelemetryService.instance.showCinematicHud.value = false;
+    _chargingHudModalOpen = true;
+    showDialog(
+      context: nav.context,
+      barrierColor: Colors.black.withValues(alpha: 0.82),
+      builder: (_) => const ArcReactorChargingDialog(),
+    ).whenComplete(() {
+      _chargingHudModalOpen = false;
+    });
   }
 
   void _onSettingsChanged() {

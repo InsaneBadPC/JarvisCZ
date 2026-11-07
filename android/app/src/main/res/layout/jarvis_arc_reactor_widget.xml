@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="2dp">
+
+    <!-- High-DPI rendered 3D Arc Reactor + Stark Tactical Console Canvas -->
+    <ImageView
+        android:id="@+id/widget_canvas_image"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="fitXY"
+        android:contentDescription="JARVIS 3D Obloukový reaktor a telemetrie" />
+
+    <!-- Interactive Touch Matrix Overlay matching the rendered HUD layout -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:weightSum="100">
+
+        <!-- Top 76%: Left 46% = 3D Reactor Core (opens 3D Console), Right 54% = Telemetry + 3D Tilt/Refresh -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="76"
+            android:orientation="horizontal"
+            android:weightSum="100">
+
+            <FrameLayout
+                android:id="@+id/btn_reactor_core"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="46"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="@android:color/transparent" />
+
+            <FrameLayout
+                android:id="@+id/btn_tilt_3d"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="54"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="@android:color/transparent" />
+        </LinearLayout>
+
+        <!-- Bottom 24%: 3 Tactical Action Modules (Hlasový rozkaz | Hlasové hlášení | Pulzní světlo) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="24"
+            android:orientation="horizontal"
+            android:weightSum="3">
+
+            <FrameLayout
+                android:id="@+id/btn_voice_cmd"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="@android:color/transparent" />
+
+            <FrameLayout
+                android:id="@+id/btn_speak_status"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="@android:color/transparent" />
+
+            <FrameLayout
+                android:id="@+id/btn_torch"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="@android:color/transparent" />
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>

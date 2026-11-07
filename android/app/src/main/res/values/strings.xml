@@ -3,4 +3,5 @@
     <string name="app_name">JARVIS</string>
     <string name="accessibility_service_label">JARVIS Ovládání obrazovky</string>
     <string name="accessibility_service_description">JARVIS využívá tuto službu ke čtení rozložení obrazovky a provádění klepnutí, gest, posouvání a psaní vaším jménem při automatizaci úkolů. Žádný obsah obrazovky neopouští vaše zařízení kromě odeslání vámi nastavenému poskytovateli AI. Tuto službu můžete kdykoli vypnout a zastavit tak veškerou automatizaci.</string>
+    <string name="widget_arc_reactor_description">3D Obloukový reaktor Mark LXXXV s živou telemetrií energie, teploty jádra, hlasovým ovládáním a pulzním světlem.</string>
 </resources>

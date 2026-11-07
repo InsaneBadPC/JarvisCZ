@@ -36,10 +36,33 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+    private var servicePowerReceiver: android.content.BroadcastReceiver? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        setupServicePowerReceiver()
+    }
+
+    private fun setupServicePowerReceiver() {
+        if (servicePowerReceiver != null) return
+        val filter = android.content.IntentFilter().apply {
+            addAction(android.content.Intent.ACTION_POWER_CONNECTED)
+            addAction(android.content.Intent.ACTION_POWER_DISCONNECTED)
+        }
+        servicePowerReceiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
+                val ctx = context ?: this@AgentAccessibilityService
+                val action = intent?.action ?: return
+                if (action == android.content.Intent.ACTION_POWER_CONNECTED) {
+                    MainActivity.wakeScreenAndLaunchAction(ctx, "power_connected_lockscreen")
+                }
+                JarvisArcReactorWidgetProvider.updateAllWidgets(ctx)
+            }
+        }
+        try {
+            registerReceiver(servicePowerReceiver, filter)
+        } catch (_: Exception) {}
     }
 
     // ------------------------------------------------------------------
@@ -141,6 +164,12 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        try {
+            if (servicePowerReceiver != null) {
+                unregisterReceiver(servicePowerReceiver)
+                servicePowerReceiver = null
+            }
+        } catch (_: Exception) {}
         if (instance === this) instance = null
         super.onDestroy()
     }

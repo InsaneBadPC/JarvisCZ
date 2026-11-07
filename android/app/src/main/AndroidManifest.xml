@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
 
     <!-- Floating overlay window -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
@@ -56,6 +58,9 @@
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:showOnLockScreen="true"
             android:taskAffinity=""
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
@@ -109,6 +114,26 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
+
+        <!-- 3D Mark LXXXV Arc Reactor & Tactical Telemetry Home Screen Widget -->
+        <receiver
+            android:name=".JarvisArcReactorWidgetProvider"
+            android:label="JARVIS 3D Obloukový reaktor"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="android.intent.action.ACTION_POWER_CONNECTED" />
+                <action android:name="android.intent.action.ACTION_POWER_DISCONNECTED" />
+                <action android:name="com.privateagent.private_agent.WIDGET_REFRESH_TILT" />
+                <action android:name="com.privateagent.private_agent.WIDGET_OPEN_REACTOR_HUD" />
+                <action android:name="com.privateagent.private_agent.WIDGET_VOICE_COMMAND" />
+                <action android:name="com.privateagent.private_agent.WIDGET_SPEAK_TELEMETRY" />
+                <action android:name="com.privateagent.private_agent.WIDGET_TOGGLE_TORCH" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/jarvis_arc_reactor_widget_info" />
+        </receiver>
 
         <!-- FileProvider for Jarvis Eye camera snapshot captures -->
         <provider

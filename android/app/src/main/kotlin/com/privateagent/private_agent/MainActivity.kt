@@ -90,6 +90,160 @@ class MainActivity : FlutterActivity() {
 
     // Charging & Power Telemetry Receiver
     private var powerReceiver: android.content.BroadcastReceiver? = null
+    private var pendingLaunchAction: String? = null
+
+    companion object {
+        @Volatile
+        var lastPowerConnectDispatchTime: Long = 0L
+
+        /**
+         * Wakes the physical screen from sleep/lockscreen, bypasses/overlays keyguard,
+         * and brings MainActivity to the foreground with the requested tactical action.
+         */
+        fun wakeScreenAndLaunchAction(context: Context, actionName: String) {
+            try {
+                val pm = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+                @Suppress("DEPRECATION")
+                val wl = pm?.newWakeLock(
+                    android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
+                        android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                        android.os.PowerManager.ON_AFTER_RELEASE,
+                    "jarvis:tactical_hud_wakelock"
+                )
+                wl?.acquire(18000L)
+            } catch (_: Exception) {}
+
+            val launchIntent = Intent(context, MainActivity::class.java).apply {
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                )
+                putExtra("jarvis_launch_action", actionName)
+            }
+
+            try {
+                context.startActivity(launchIntent)
+            } catch (_: Exception) {}
+
+            // On Android 10+ when locked, also fire a Full-Screen Intent notification
+            // so the OS guarantees immediate lock-screen presentation.
+            if (actionName == "power_connected_lockscreen" || actionName == "open_charging_hud") {
+                try {
+                    val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+                    val chanId = "jarvis_reactor_lockscreen_hud"
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && nm != null) {
+                        val chan = android.app.NotificationChannel(
+                            chanId,
+                            "JARVIS Telemetrie Obloukového Reaktoru",
+                            android.app.NotificationManager.IMPORTANCE_HIGH
+                        ).apply {
+                            description = "Okamžité zobrazení 3D Obloukového reaktoru na zamknuté obrazovce při nabíjení"
+                            lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+                            setSound(null, null)
+                        }
+                        nm.createNotificationChannel(chan)
+                    }
+                    val piFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+                    } else {
+                        android.app.PendingIntent.FLAG_UPDATE_CURRENT
+                    }
+                    val fullScreenPi = android.app.PendingIntent.getActivity(context, 9911, launchIntent, piFlags)
+                    val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        android.app.Notification.Builder(context, chanId)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        android.app.Notification.Builder(context)
+                    }
+                    builder.setSmallIcon(R.mipmap.ic_launcher)
+                        .setContentTitle("⚡ OBLOUKOVÝ REAKTOR PŘIPOJEN")
+                        .setContentText("Aktivní 3D telemetrie nabíjení Mark LXXXV")
+                        .setAutoCancel(true)
+                        .setFullScreenIntent(fullScreenPi, true)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                        builder.setCategory(android.app.Notification.CATEGORY_CALL)
+                            .setVisibility(android.app.Notification.VISIBILITY_PUBLIC)
+                    }
+                    nm?.notify(9911, builder.build())
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        try { nm?.cancel(9911) } catch (_: Exception) {}
+                    }, 4500L)
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    private fun enableLockScreenPresentation() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                setShowWhenLocked(true)
+                setTurnScreenOn(true)
+            }
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                    android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                    android.view.WindowManager.LayoutParams.FLAG_ALLOW_LOCK_WHILE_SCREEN_ON
+            )
+        } catch (_: Exception) {}
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        enableLockScreenPresentation()
+        super.onCreate(savedInstanceState)
+        handleIncomingJarvisIntent(intent)
+        JarvisArcReactorWidgetProvider.updateAllWidgets(this)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        enableLockScreenPresentation()
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncomingJarvisIntent(intent)
+    }
+
+    private fun handleIncomingJarvisIntent(intent: Intent?) {
+        val action = intent?.getStringExtra("jarvis_launch_action") ?: return
+        intent.removeExtra("jarvis_launch_action")
+        pendingLaunchAction = action
+        dispatchPendingLaunchAction(0)
+    }
+
+    private fun dispatchPendingLaunchAction(attempt: Int) {
+        val action = pendingLaunchAction ?: return
+        val ch = accessibilityChannel
+        if (ch == null) {
+            if (attempt < 25) {
+                mainHandler.postDelayed({ dispatchPendingLaunchAction(attempt + 1) }, 220L)
+            }
+            return
+        }
+        pendingLaunchAction = null
+        mainHandler.postDelayed({
+            when (action) {
+                "power_connected_lockscreen" -> {
+                    val now = System.currentTimeMillis()
+                    if (now - lastPowerConnectDispatchTime > 2500L) {
+                        lastPowerConnectDispatchTime = now
+                        val telemetry = getBatteryTelemetryDetails(true)
+                        ch.invokeMethod("onPowerConnected", telemetry)
+                    }
+                }
+                "open_charging_hud" -> {
+                    ch.invokeMethod("onWidgetOpenReactorHud", getBatteryTelemetryDetails())
+                }
+                "widget_voice_command" -> {
+                    ch.invokeMethod("onWidgetVoiceCommand", null)
+                }
+                "widget_speak_telemetry" -> {
+                    ch.invokeMethod("onWidgetSpeakTelemetry", null)
+                }
+            }
+        }, 250L)
+    }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
@@ -337,9 +491,18 @@ class MainActivity : FlutterActivity() {
                 val action = intent?.action ?: return
                 val isConnected = action == Intent.ACTION_POWER_CONNECTED
                 val telemetry = getBatteryTelemetryDetails(isConnected)
+                if (isConnected) {
+                    enableLockScreenPresentation()
+                    wakeScreenAndLaunchAction(this@MainActivity, "power_connected_lockscreen")
+                }
+                JarvisArcReactorWidgetProvider.updateAllWidgets(this@MainActivity)
                 mainHandler.post {
                     if (isConnected) {
-                        accessibilityChannel?.invokeMethod("onPowerConnected", telemetry)
+                        val now = System.currentTimeMillis()
+                        if (now - lastPowerConnectDispatchTime > 2500L) {
+                            lastPowerConnectDispatchTime = now
+                            accessibilityChannel?.invokeMethod("onPowerConnected", telemetry)
+                        }
                     } else {
                         accessibilityChannel?.invokeMethod("onPowerDisconnected", telemetry)
                     }
@@ -717,6 +880,7 @@ class MainActivity : FlutterActivity() {
         val aChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
         accessibilityChannel = aChannel
         setupPowerReceiver()
+        dispatchPendingLaunchAction(0)
         aChannel.setMethodCallHandler { call, result ->
                 val service = AgentAccessibilityService.instance
                 when (call.method) {
