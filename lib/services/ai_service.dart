@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'conversational_memory_service.dart';
 import 'hermes_evolution_service.dart';
 import 'personality_service.dart';
+import 'secrets_vault_service.dart';
 import 'settings_service.dart';
 
 /// Error thrown for any AI-gateway failure (network, auth, bad payload).
@@ -1484,7 +1485,8 @@ Uživatel si prohlíží článek nebo obrazovku na svém zařízení a požáda
     return 'Slyším vás, pane. Momentálně čekám na odezvu vzdáleného neuronového uzlu — zopakujte prosím myšlenku nebo zadejte klíč API v Nastavení pro okamžitou odezvu.';
   }
 
-  /// Shared request/response plumbing with Multi-Model AI Routing per [AiTaskRole].
+  /// Shared request/response plumbing with Multi-Model AI Routing per [AiTaskRole]
+  /// and automatic key rotation when rate limit / quota is exhausted.
   Future<String> _postChatCompletion(
     List<Map<String, dynamic>> messages,
     SettingsService settings, {
@@ -1501,7 +1503,12 @@ Uživatel si prohlíží článek nebo obrazovku na svém zařízení a požáda
             (settings.apiKey.isEmpty && !_isLocalBackend));
 
     final activeProvider = useSecondary ? settings.secondaryProvider : settings.provider;
-    final activeApiKey = useSecondary ? settings.secondaryApiKey : settings.apiKey;
+    var activeApiKey = useSecondary
+        ? settings.secondaryApiKey
+        : SecretsVaultService.instance.getActiveKey(activeProvider);
+    if (activeApiKey.isEmpty) {
+      activeApiKey = useSecondary ? settings.secondaryApiKey : settings.apiKey;
+    }
     final activeBaseUrl = useSecondary ? settings.secondaryBaseUrl : settings.baseUrl;
     final activeModel = settings.effectiveModelForRole(role);
 
@@ -1515,58 +1522,78 @@ Uživatel si prohlíží článek nebo obrazovku na svém zařízení a požáda
     final base = activeBaseUrl.replaceAll(RegExp(r'/+$'), '');
     final uri = Uri.parse('$base/chat/completions');
 
-    final headers = <String, String>{
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer $activeApiKey',
-      'User-Agent':
-          'Mozilla/5.0 (Linux; Android 14) '
-          'AppleWebKit/537.36 (KHTML, like Gecko) '
-          'Chrome/120.0.0.0 Mobile Safari/537.36',
-      if (activeProvider == 'openrouter') ...{
-        'HTTP-Referer': 'https://privateagent.local',
-        'X-Title': 'JARVIS',
-      },
-    };
+    // Attempt request with auto-rotation on 429/402/401
+    final pool = SecretsVaultService.instance.getKeys(activeProvider);
+    final maxAttempts = pool.length > 1 ? pool.length : 1;
 
-    final body = jsonEncode({
-      'model': activeModel,
-      'messages': messages,
-      'max_tokens': settings.maxTokens,
-      'temperature': role == AiTaskRole.deepReasoning ? 0.25 : settings.temperature,
-      'stream': false,
-    });
+    for (var attempt = 0; attempt < maxAttempts; attempt++) {
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $activeApiKey',
+        'User-Agent':
+            'Mozilla/5.0 (Linux; Android 14) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) '
+            'Chrome/120.0.0.0 Mobile Safari/537.36',
+        if (activeProvider == 'openrouter') ...{
+          'HTTP-Referer': 'https://privateagent.local',
+          'X-Title': 'JARVIS',
+        },
+      };
 
-    http.Response res;
-    try {
-      res = await _client
-          .post(uri, headers: headers, body: body)
-          .timeout(const Duration(seconds: 25));
-    } catch (_) {
-      return _postZeroKeyFallback(messages, role: role);
-    }
+      final body = jsonEncode({
+        'model': activeModel,
+        'messages': messages,
+        'max_tokens': settings.maxTokens,
+        'temperature': role == AiTaskRole.deepReasoning ? 0.25 : settings.temperature,
+        'stream': false,
+      });
 
-    if (res.statusCode != 200) {
-      return _postZeroKeyFallback(messages, role: role);
-    }
-
-    try {
-      final decoded = jsonDecode(utf8.decode(res.bodyBytes));
-      final choices = decoded['choices'];
-      if (choices is! List || choices.isEmpty) {
+      http.Response res;
+      try {
+        res = await _client
+            .post(uri, headers: headers, body: body)
+            .timeout(const Duration(seconds: 25));
+      } catch (_) {
         return _postZeroKeyFallback(messages, role: role);
       }
-      final choice = choices[0];
-      final content = choice?['message']?['content'];
-      if (content is String && content.trim().isNotEmpty) return content;
-      if (content is List) {
-        final joined = content
-            .map((p) => p is Map ? '${p['text'] ?? ''}' : '$p')
-            .join();
-        if (joined.trim().isNotEmpty) return joined;
+
+      // Check if quota/rate limit exhausted (429, 402, or 401)
+      if (res.statusCode == 429 || res.statusCode == 402 || res.statusCode == 401) {
+        if (!useSecondary) {
+          final nextKey = SecretsVaultService.instance.rotateKey(activeProvider);
+          if (nextKey != null && nextKey != activeApiKey) {
+            activeApiKey = nextKey;
+            continue; // Retry next key in pool immediately
+          }
+        }
+        return _postZeroKeyFallback(messages, role: role);
       }
-      return _postZeroKeyFallback(messages, role: role);
-    } catch (_) {
-      return _postZeroKeyFallback(messages, role: role);
+
+      if (res.statusCode != 200) {
+        return _postZeroKeyFallback(messages, role: role);
+      }
+
+      try {
+        final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+        final choices = decoded['choices'];
+        if (choices is! List || choices.isEmpty) {
+          return _postZeroKeyFallback(messages, role: role);
+        }
+        final choice = choices[0];
+        final content = choice?['message']?['content'];
+        if (content is String && content.trim().isNotEmpty) return content;
+        if (content is List) {
+          final joined = content
+              .map((p) => p is Map ? '${p['text'] ?? ''}' : '$p')
+              .join();
+          if (joined.trim().isNotEmpty) return joined;
+        }
+        return _postZeroKeyFallback(messages, role: role);
+      } catch (_) {
+        return _postZeroKeyFallback(messages, role: role);
+      }
     }
+
+    return _postZeroKeyFallback(messages, role: role);
   }
 }

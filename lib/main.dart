@@ -11,6 +11,7 @@ import 'services/hermes_evolution_service.dart';
 import 'services/jarvis_service.dart';
 import 'services/native_bridge_service.dart';
 import 'services/screen_automation_service.dart';
+import 'services/secrets_vault_service.dart';
 import 'services/sentry_service.dart';
 import 'services/settings_service.dart';
 import 'services/task_executor.dart';
@@ -23,6 +24,7 @@ Future<void> main() async {
 
   final settings = SettingsService.instance;
   await settings.init();
+  await SecretsVaultService.instance.init();
 
   final executor = TaskExecutor.instance;
   await executor.init();

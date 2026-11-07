@@ -2,6 +2,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 
 import '../../services/personality_service.dart';
+import '../../services/secrets_vault_service.dart';
 import '../../services/settings_service.dart';
 import '../../services/telegram_service.dart';
 import '../../widgets/glass_widgets.dart';
@@ -277,6 +278,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   color: const Color(0xFF818CF8),
                 ),
                 _aiProviderCard(),
+                const SizedBox(height: 14),
+                _secretsVaultCard(),
                 const SizedBox(height: 22),
 
                 _sectionHeader(
@@ -555,6 +558,273 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
           ],
         ],
+      ),
+    );
+  }
+
+  Widget _secretsVaultCard() {
+    final vault = SecretsVaultService.instance;
+    final primaryProvider = _settings.provider;
+    final primaryKeys = vault.getKeys(primaryProvider);
+
+    return GlassCard(
+      borderRadius: 22,
+      padding: const EdgeInsets.all(18),
+      borderColor: const Color(0xFFF59E0B).withValues(alpha: 0.35),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(7),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF59E0B).withValues(alpha: 0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.vpn_key_rounded, size: 20, color: Color(0xFFF59E0B)),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Trezor secrets a rotace klíčů',
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+                    ),
+                    Text(
+                      'Automatická rotace při vyčerpání kvóty / free tieru',
+                      style: TextStyle(fontSize: 11, color: Colors.white70),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: _showAutoScanDialog,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFF59E0B).withValues(alpha: 0.2),
+                    foregroundColor: const Color(0xFFFBBF24),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    side: const BorderSide(color: Color(0xFFF59E0B), width: 0.8),
+                  ),
+                  icon: const Icon(Icons.folder_special_rounded, size: 16),
+                  label: const Text('Načíst z /insanecode', style: TextStyle(fontSize: 12)),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: _showImportDialog,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF6366F1).withValues(alpha: 0.2),
+                    foregroundColor: const Color(0xFFA5B4FC),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    side: const BorderSide(color: Color(0xFF6366F1), width: 0.8),
+                  ),
+                  icon: const Icon(Icons.file_upload_outlined, size: 16),
+                  label: const Text('Import / Šifra', style: TextStyle(fontSize: 12)),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Klíče pro aktivního poskytovatele ($primaryProvider): ${primaryKeys.length} v poolu',
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFFFBBF24)),
+          ),
+          if (primaryKeys.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (var i = 0; i < primaryKeys.length; i++)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: (vault.getActiveKey(primaryProvider) == primaryKeys[i])
+                          ? const Color(0xFF10B981).withValues(alpha: 0.2)
+                          : Colors.white10,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: (vault.getActiveKey(primaryProvider) == primaryKeys[i])
+                            ? Colors.greenAccent
+                            : Colors.white24,
+                        width: 0.8,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '#${i + 1} ...${primaryKeys[i].length > 8 ? primaryKeys[i].substring(primaryKeys[i].length - 6) : primaryKeys[i]}',
+                          style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+                        ),
+                        if (vault.getActiveKey(primaryProvider) == primaryKeys[i]) ...[
+                          const SizedBox(width: 4),
+                          const Icon(Icons.check_circle_rounded, size: 12, color: Colors.greenAccent),
+                        ],
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  void _showAutoScanDialog() async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const Center(
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('Skenuji složku /insanecode a importuji secrets...'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final summary = await SecretsVaultService.instance.autoScanInsaneCode();
+    if (!mounted) return;
+    Navigator.of(context).pop();
+
+    final totalKeys = summary.values.fold(0, (a, b) => a + b);
+    setState(() {
+      _apiKeyController.text = _settings.apiKey;
+    });
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.check_circle_outline, color: Colors.greenAccent),
+            SizedBox(width: 8),
+            Text('Secrets naimportovány'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Nalezeno celkem $totalKeys klíčů v /insanecode:'),
+            const SizedBox(height: 10),
+            for (final entry in summary.entries)
+              Text('• ${entry.key}: ${entry.value} klíčů', style: const TextStyle(fontWeight: FontWeight.w600)),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Rozumím'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showImportDialog() {
+    final textController = TextEditingController();
+    final passController = TextEditingController();
+    var isEncrypted = false;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDlgState) => AlertDialog(
+          title: const Text('Import secrets / Trezor'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: textController,
+                  maxLines: 6,
+                  decoration: const InputDecoration(
+                    labelText: 'Vložte JSON, CSV, ENV nebo šifrovaný text',
+                    border: OutlineInputBorder(),
+                    hintText: '{\n  "gemini": ["..."]\n}',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Checkbox(
+                      value: isEncrypted,
+                      onChanged: (v) => setDlgState(() => isEncrypted = v ?? false),
+                    ),
+                    const Text('Soubor je šifrován heslem'),
+                  ],
+                ),
+                if (isEncrypted) ...[
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: passController,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Heslo pro dešifrování',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Zrušit'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final text = textController.text.trim();
+                if (text.isEmpty) return;
+                Navigator.of(ctx).pop();
+                try {
+                  final summary = await SecretsVaultService.instance.importFromContent(
+                    text,
+                    password: isEncrypted ? passController.text.trim() : null,
+                  );
+                  if (!mounted) return;
+                  setState(() {
+                    _apiKeyController.text = _settings.apiKey;
+                  });
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Úspěšně importováno: ${summary.length} poskytovatelů'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                } catch (e) {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Chyba importu/dešifrování: $e'), backgroundColor: Colors.red),
+                  );
+                }
+              },
+              child: const Text('Importovat'),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -49,9 +49,9 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.5.0-cz
-          name: "JARVIS CZ v1.5.0"
-          body: "Kompletní česká lokalizace J.A.R.V.I.S. + Hlasový režim Gemini Live (plynulý obousměrný rozhovor a skákání do řeči), Více-modelový AI směrovač pro 5 typů úloh, přímé otevírání webových stránek v prohlížeči, bleskové TTS a 3D obloukový reaktor Mark LXXXV."
+          tag_name: v1.6.0-cz
+          name: "JARVIS CZ v1.6.0"
+          body: "Kompletní česká lokalizace J.A.R.V.I.S. + Trezor secrets s podporou šifrování a importu, automatická rotace multi-klíčů při vyčerpání free tieru/rate limitu (429/402), Gemini Live hlasový režim a 5-úlohový AI směrovač."
           files: build/app/outputs/flutter-apk/jarvis-release-cz.apk
           draft: false
           prerelease: false

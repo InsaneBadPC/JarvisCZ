@@ -286,6 +286,15 @@ class SettingsService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Multi-key pool storage for rotating API keys when free tier is exhausted
+  List<String> getProviderKeyPool(String provider) =>
+      _prefs?.getStringList('ai_key_pool_$provider') ?? [];
+
+  Future<void> setProviderKeyPool(String provider, List<String> keys) async {
+    await _prefs?.setStringList('ai_key_pool_$provider', keys);
+    notifyListeners();
+  }
+
   String get provider => _prefs?.getString('ai_provider') ?? 'deepseek';
   Future<void> setProvider(String value) async {
     await _prefs?.setString('ai_provider', value);
